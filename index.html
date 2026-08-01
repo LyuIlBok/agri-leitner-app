@@ -181,53 +181,50 @@
       { tokenizationSpecification: GOOGLE_PAY_TOKENIZATION_SPEC }
     );
 
-    // --- High-difficulty Agri-Engineering Terms for Initial Population ---
+    // --- 중학교 정규과정 수준 기본 영어 단어 (신규 계정 초기 세팅) ---
+    const mkCard = (term, meaning, morphology, context_sentence) => ({
+      term, meaning, morphology, context_sentence,
+      stage: 1,
+      next_review_at: new Date().toISOString().split('T')[0],
+      is_graduated: false
+    });
     const INITIAL_CARDS = [
-      {
-        term: "Foliar Treatment",
-        meaning: "경엽처리 (식물체의 잎과 줄기에 제초제나 비료를 직접 살포하는 방제법)",
-        morphology: { prefix: "Foli (잎)", root: "ar (의)", suffix: "Treatment (처리)" },
-        context_sentence: "잡초의 생장점에서 신속히 흡수되도록 제초제를 Foliar Treatment하여 잡초 방제 효율을 극대화했습니다.",
-        stage: 1,
-        next_review_at: new Date().toISOString().split('T')[0],
-        is_graduated: false
-      },
-      {
-        term: "Pollinizer",
-        meaning: "수분수 (과수원에서 타가수분을 유도하여 결실률을 높이기 위해 꽃가루를 공급하는 나무)",
-        morphology: { prefix: "Pollin (꽃가루)", root: "ize (되다)", suffix: "er (것)" },
-        context_sentence: "자가 결실률이 낮은 사과 품종의 재배지에 꽃가루가 풍부한 Pollinizer 품종을 일정한 비율로 혼식 설계했습니다.",
-        stage: 1,
-        next_review_at: new Date().toISOString().split('T')[0],
-        is_graduated: false
-      },
-      {
-        term: "Vernalization",
-        meaning: "춘화처리 (작물의 개화를 유도하고 성장을 조절하기 위해 일정 기간 저온 노출을 적용하는 처리)",
-        morphology: { prefix: "Vern (봄)", root: "al (의)", suffix: "ization (처리/화)" },
-        context_sentence: "가을보리를 봄에 파종하기 전에 습한 상태에서 저온 처리를 하는 Vernalization 과정을 가하여 개화를 정상화했습니다.",
-        stage: 1,
-        next_review_at: new Date().toISOString().split('T')[0],
-        is_graduated: false
-      },
-      {
-        term: "Grafted Seedling",
-        meaning: "접목묘 (강인한 대목과 우수한 접수를 결합하여 토양 병해충 저항성과 생장력을 키운 융합 묘목)",
-        morphology: { prefix: "Graft (접목)", root: "ed (된)", suffix: "Seedling (묘목)" },
-        context_sentence: "토양 전염성 병원균 피해를 극복하고 건실한 생장 환경을 조성하기 위해 참외 수박 정식 시 Grafted Seedling을 배치했습니다.",
-        stage: 1,
-        next_review_at: new Date().toISOString().split('T')[0],
-        is_graduated: false
-      },
-      {
-        term: "Dormancy Breaking",
-        meaning: "휴면타파 (자연적/인위적으로 식물의 잠자는 상태를 깨워 균일한 발아 및 성장을 촉진하는 작용)",
-        morphology: { prefix: "Dorm (잠자다)", root: "ancy (상태)", suffix: "Breaking (깨우기)" },
-        context_sentence: "봄철 포도나무의 균일하고 빠른 발아를 촉진하기 위해 약제를 살포하여 조기에 Dormancy Breaking을 실시했습니다.",
-        stage: 1,
-        next_review_at: new Date().toISOString().split('T')[0],
-        is_graduated: false
-      }
+      mkCard("environment", "환경 (우리를 둘러싼 자연·상황)",
+        { prefix: "en- (둘러)", root: "viron (원, 둘러싸다)", suffix: "-ment (명사)" },
+        "We must protect the environment for future generations."),
+      mkCard("improve", "향상시키다, 개선하다",
+        { prefix: "im- (안으로)", root: "prove (더 낫게, 증명)", suffix: "" },
+        "Reading every day will improve your English skills."),
+      mkCard("decide", "결정하다",
+        { prefix: "de- (완전히)", root: "cide (자르다, cis)", suffix: "" },
+        "I can't decide what to eat for lunch."),
+      mkCard("experience", "경험",
+        { prefix: "ex- (밖으로)", root: "peri (시도하다)", suffix: "-ence (명사)" },
+        "Traveling abroad was a great experience for me."),
+      mkCard("reduce", "줄이다, 감소시키다",
+        { prefix: "re- (뒤로)", root: "duce (이끌다, duc)", suffix: "" },
+        "We should reduce the amount of plastic we use."),
+      mkCard("prepare", "준비하다",
+        { prefix: "pre- (미리)", root: "pare (마련하다)", suffix: "" },
+        "She stayed up late to prepare for the exam."),
+      mkCard("explain", "설명하다",
+        { prefix: "ex- (밖으로)", root: "plain (분명하게)", suffix: "" },
+        "Can you explain this math problem to me?"),
+      mkCard("encourage", "격려하다, 용기를 주다",
+        { prefix: "en- (~하게 하다)", root: "courage (용기)", suffix: "" },
+        "My teacher always encourages me to try again."),
+      mkCard("protect", "보호하다, 지키다",
+        { prefix: "pro- (앞에서)", root: "tect (덮다)", suffix: "" },
+        "You should wear a helmet to protect your head."),
+      mkCard("discover", "발견하다",
+        { prefix: "dis- (제거)", root: "cover (덮다)", suffix: "" },
+        "Scientists hope to discover a cure for the disease."),
+      mkCard("responsible", "책임감 있는",
+        { prefix: "re- (다시)", root: "spons (응답하다, spond)", suffix: "-ible (~할 수 있는)" },
+        "You are responsible for keeping your room clean."),
+      mkCard("achieve", "이루다, 달성하다",
+        { prefix: "a- (~로)", root: "chieve (끝/머리, chief)", suffix: "" },
+        "If you work hard, you can achieve your dreams.")
     ];
 
     function App() {
