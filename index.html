@@ -90,10 +90,10 @@
     const normAnswer = (s) => (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
 
     // --- Mini crossword generator (greedy on-the-fly from learned words) ---
-    const generateCrossword = (rawWords, maxWords = 7) => {
+    const generateCrossword = (rawWords, maxWords = 6) => {
       const words = rawWords
         .map(w => ({ answer: (w.term || '').toUpperCase().replace(/[^A-Z]/g, ''), clue: w.meaning }))
-        .filter(w => w.answer.length >= 3 && w.answer.length <= 8)
+        .filter(w => w.answer.length >= 3 && w.answer.length <= 7)
         .filter((w, i, a) => a.findIndex(x => x.answer === w.answer) === i)
         .sort((a, b) => b.answer.length - a.answer.length);
       if (words.length < 3) return null;
@@ -116,22 +116,33 @@
         for (let i = 0; i < answer.length; i++) grid[key(row + dr * i, col + dc * i)] = answer[i];
         placed.push({ answer, clue, row, col, dir });
       };
+      const bounds = () => { let a = Infinity, b = Infinity, cc = -Infinity, d = -Infinity; for (const k of Object.keys(grid)) { const [r, c] = k.split(',').map(Number); a = Math.min(a, r); b = Math.min(b, c); cc = Math.max(cc, r); d = Math.max(d, c); } return [a, b, cc, d]; };
       place(words[0].answer, words[0].clue, 0, 0, 'across');
       for (let wi = 1; wi < words.length && placed.length < maxWords; wi++) {
-        const { answer, clue } = words[wi]; let best = null;
-        for (let i = 0; i < answer.length && !best; i++) {
+        const { answer, clue } = words[wi];
+        const cands = [];
+        for (let i = 0; i < answer.length; i++) {
           for (const ck of Object.keys(grid)) {
             if (grid[ck] !== answer[i]) continue;
-            const [cr, cc] = ck.split(',').map(Number);
+            const [cr, cc2] = ck.split(',').map(Number);
             for (const dir of ['down', 'across']) {
               const dr = dir === 'down' ? 1 : 0, dc = dir === 'across' ? 1 : 0;
-              const row = cr - dr * i, col = cc - dc * i;
-              if (canPlace(answer, row, col, dir)) { best = { row, col, dir }; break; }
+              const row = cr - dr * i, col = cc2 - dc * i;
+              if (canPlace(answer, row, col, dir)) cands.push({ row, col, dir });
             }
-            if (best) break;
           }
         }
-        if (best) place(answer, clue, best.row, best.col, best.dir);
+        if (!cands.length) continue;
+        const [minR, minC, maxR, maxC] = bounds();
+        const score = (p) => {
+          const dr = p.dir === 'down' ? 1 : 0, dc = p.dir === 'across' ? 1 : 0;
+          const er = p.row + dr * (answer.length - 1), ec = p.col + dc * (answer.length - 1);
+          const w = Math.max(maxC, p.col, ec) - Math.min(minC, p.col, ec) + 1;
+          const h = Math.max(maxR, p.row, er) - Math.min(minR, p.row, er) + 1;
+          return Math.max(w, h) * 100 + (w + h); // prefer compact (small max dimension)
+        };
+        cands.sort((a, b) => score(a) - score(b));
+        place(answer, clue, cands[0].row, cands[0].col, cands[0].dir);
       }
       if (placed.length < 3) return null;
       let minR = Infinity, minC = Infinity, maxR = -Infinity, maxC = -Infinity;
@@ -1377,7 +1388,7 @@
       const lvl = gami ? levelInfo(gami.xp) : null;
 
       // Crossword: cell size that fits the container (no cut-off) + active-word cell set (highlight)
-      const cwCellPx = (cw && cw.cols) ? Math.max(20, Math.min(34, Math.floor(320 / cw.cols))) : 32;
+      const cwCellPx = (cw && cw.cols) ? Math.max(26, Math.min(40, Math.floor(360 / cw.cols))) : 34;
       const cwActiveCells = (() => {
         if (!cw || !cwActive) return null;
         const s = {}; const { r, c, dir } = cwActive;
