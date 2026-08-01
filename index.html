@@ -66,7 +66,7 @@
   <div id="root"></div>
 
   <script type="text/babel">
-    const { useState, useEffect, useMemo } = React;
+    const { useState, useEffect, useMemo, useRef } = React;
 
     // --- Supabase Config (Reusing your shopping mall credentials) ---
     const SUPABASE_URL = "https://cfimyvvecsoqeicsjezo.supabase.co";
@@ -98,6 +98,8 @@
 
     const dateStr = (d = new Date()) => d.toISOString().split('T')[0];
     const todayStr = () => dateStr();
+    // Year-month bucket for monthly AI-usage reset (null timestamp → treated as current month)
+    const monthKey = (d) => { const x = d ? new Date(d) : new Date(); return x.getUTCFullYear() + '-' + x.getUTCMonth(); };
     const yesterdayStr = () => { const d = new Date(); d.setDate(d.getDate() - 1); return dateStr(d); };
 
     // Cumulative XP for reaching level n = 50 * n * (n-1)  → L1:0, L2:100, L3:300, L4:600, L5:1000 ...
@@ -362,17 +364,45 @@
         }
       }, [isDarkMode, apiKey, autoSpeak, studyMode, isLoaded]);
 
-      // 4b. Gamification: load per-user profile from localStorage (with daily rollovers)
+      // 4b. Gamification: load per-user from localStorage first (fast, offline-safe)
+      const gamiReconciled = useRef(false);
+      const gamiSaveTimer = useRef(null);
       useEffect(() => {
-        if (!user) { setGami(null); return; }
+        if (!user) { setGami(null); gamiReconciled.current = false; return; }
+        gamiReconciled.current = false;
         let stored = null;
         try { stored = JSON.parse(localStorage.getItem(GAMI_KEY(user.id))); } catch (e) { stored = null; }
         setGami(rolloverGami(stored || freshGami()));
       }, [user]);
 
-      // 4c. Gamification: persist on change
+      // 4b-2. Reconcile once with cloud copy (agri_profiles.gamification) when profile arrives.
+      // Cloud is shared across devices; the record with more XP progress wins.
       useEffect(() => {
-        if (user && gami) localStorage.setItem(GAMI_KEY(user.id), JSON.stringify(gami));
+        if (!user || !profile || gamiReconciled.current) return;
+        gamiReconciled.current = true;
+        const cloud = (profile.gamification && Object.keys(profile.gamification).length) ? profile.gamification : null;
+        if (!cloud) return; // cloud empty → local will be pushed up by the persist effect
+        setGami(prev => {
+          const local = prev || freshGami();
+          const base = (cloud.xp || 0) > (local.xp || 0) ? cloud : local;
+          return rolloverGami({
+            ...freshGami(),
+            ...base,
+            xp: Math.max(local.xp || 0, cloud.xp || 0),
+            longestStreak: Math.max(local.longestStreak || 0, cloud.longestStreak || 0)
+          });
+        });
+      }, [profile, user]);
+
+      // 4c. Gamification: persist to localStorage immediately + debounced cloud sync
+      useEffect(() => {
+        if (!(user && gami)) return;
+        localStorage.setItem(GAMI_KEY(user.id), JSON.stringify(gami));
+        if (gamiSaveTimer.current) clearTimeout(gamiSaveTimer.current);
+        gamiSaveTimer.current = setTimeout(() => {
+          supabase.from('agri_profiles').update({ gamification: gami }).eq('id', user.id)
+            .then(({ error }) => { if (error) console.warn('gamification cloud sync failed:', error.message); });
+        }, 800);
       }, [gami, user]);
 
       // Award XP for a study action; handles streak, level-up, daily goal, hearts + floating feedback
@@ -757,9 +787,23 @@
         if (!apiKey) { showToast("계정 & 결제(Billing) 탭에서 Gemini API Key를 먼저 등록해 주십시오.", "error"); return; }
         if (!genKeyword.trim()) return;
 
+        // Monthly usage reset: if last_reset_at predates this month, zero the counter (agreed w/ cowork)
+        let effProfile = profile;
+        if (profile && monthKey(profile.last_reset_at) !== monthKey(new Date())) {
+          try {
+            const { data: reset, error } = await supabase
+              .from('agri_profiles')
+              .update({ ai_generations_count: 0, last_reset_at: new Date().toISOString() })
+              .eq('id', user.id)
+              .select()
+              .single();
+            if (!error && reset) { effProfile = reset; setProfile(reset); }
+          } catch (err) { /* non-fatal: fall through with existing count */ }
+        }
+
         // B2B/B2C Free Tier Usage Cap (Monthly 5 generations limit)
-        const currentCount = profile?.ai_generations_count ?? 0;
-        if (profile && profile.tier === 'Free' && currentCount >= 5) {
+        const currentCount = effProfile?.ai_generations_count ?? 0;
+        if (effProfile && effProfile.tier === 'Free' && currentCount >= 5) {
           setIsUpgradeModalOpen(true);
           return;
         }
@@ -773,14 +817,14 @@
           setGenStep(prev => prev < 4 ? prev + 1 : prev);
         }, 1200);
 
-        const prompt = `당신은 시설원예, 식물보호, 종자 생산 및 농업 법인 경영 전문가입니다. 
-주어진 키워드: '${genKeyword}'
-이 키워드에 해당하는 대표적인 학명/영단어(또는 관련 영단어)를 분석하여 반드시 아래 JSON 형식으로만 응답하십시오. 다른 설명이나 텍스트, 마크다운 코드 블록 외부 기호는 절대 포함하지 마십시오.
+        const prompt = `You are an expert English vocabulary tutor for Korean learners.
+주어진 키워드(영어 또는 한국어): '${genKeyword}'
+이 키워드에 해당하는 대표적인 영어 단어 하나를 선정해 학습용으로 분석하고, 반드시 아래 JSON 형식으로만 응답하십시오. 다른 설명·텍스트·마크다운 코드 블록 기호는 절대 포함하지 마십시오.
 {
-  "term": "해당 영단어",
-  "meaning": "한글 뜻",
-  "morphology": {"prefix": "접두사 분석", "root": "어근 분석", "suffix": "접미사 분석"},
-  "context_sentence": "시설원예, 식물보호, 농업 비즈니스 실무와 관련된 고품질 예문"
+  "term": "영어 단어 또는 짧은 표현",
+  "meaning": "한국어 뜻 (간결하게)",
+  "morphology": {"prefix": "접두사 분석(없으면 빈 문자열)", "root": "어근 분석", "suffix": "접미사 분석(없으면 빈 문자열)"},
+  "context_sentence": "그 단어를 자연스럽게 사용한 영어 예문 한 문장 (a natural English example sentence)"
 }`;
 
         try {
@@ -804,8 +848,8 @@
             setGenResult(parsed);
             showToast(`'${parsed.term}' 단어가 성공적으로 생성되었습니다.`, "success");
 
-            // Increment usage limit in Cloud Profile Database (Null-safe)
-            const nextCount = (profile?.ai_generations_count ?? 0) + 1;
+            // Increment usage limit in Cloud Profile Database (Null-safe, post-reset base)
+            const nextCount = (effProfile?.ai_generations_count ?? 0) + 1;
             const { data: updatedProfile, error: updateError } = await supabase
               .from('agri_profiles')
               .update({ ai_generations_count: nextCount })
@@ -1311,7 +1355,7 @@
                         <div className="fade-in w-full">
                           <p className="text-3xl font-bold text-emerald-600 dark:text-emerald-400 mb-8">{sessionDeck[currentIndex].meaning}</p>
                           <div className="bg-slate-50 dark:bg-slate-800/30 p-6 rounded-2xl text-left border border-slate-100 dark:border-slate-800 shadow-inner mb-10">
-                            <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase mb-3 border-b border-slate-200 dark:border-slate-800 pb-2">Business & Agri Context</p>
+                            <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase mb-3 border-b border-slate-200 dark:border-slate-800 pb-2">예문 (Example)</p>
                             <p className="text-slate-700 dark:text-slate-300 leading-relaxed text-sm italic">"{sessionDeck[currentIndex].context_sentence}"</p>
                           </div>
                           
@@ -1478,7 +1522,7 @@
                       value={genKeyword} 
                       onChange={(e) => setGenKeyword(e.target.value)}
                       className="flex-1 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-750 rounded-2xl px-4 py-3 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500"
-                      placeholder="생성하고 싶은 키워드 입력 (예: 수분수, 광합성)"
+                      placeholder="영어 단어나 주제 입력 (예: gratitude, negotiate, 여행 영어)"
                     />
                     <button 
                       type="submit" 
@@ -1502,12 +1546,12 @@
                         </span>
                         <p className="text-xs font-black text-slate-700 dark:text-slate-300">
                           {genStep === 1 && "Gemini 1.5 Flash 모델 연결 중..."}
-                          {genStep === 2 && "농업/공학 전문 어휘 형태학 분석 중..."}
-                          {genStep === 3 && "고부가가치 비즈니스 맞춤형 예문 합성 중..."}
+                          {genStep === 2 && "영어 단어 형태학(어근·접사) 분석 중..."}
+                          {genStep === 3 && "자연스러운 영어 예문 합성 중..."}
                           {genStep === 4 && "최종 클라우드 데이터 스키마 준비 중..."}
                         </p>
                       </div>
-                      <p className="text-[10px] text-slate-400 dark:text-slate-500">지능형 농업 어휘가 생성되는 동안 잠시만 기다려 주세요.</p>
+                      <p className="text-[10px] text-slate-400 dark:text-slate-500">영어 어휘 카드가 생성되는 동안 잠시만 기다려 주세요.</p>
                     </div>
                     {/* Tiny visual progress bar */}
                     <div className="w-48 bg-slate-200 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden">
