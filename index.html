@@ -14,7 +14,11 @@
       theme: {
         extend: {
           colors: {
-            brand: '#059669'
+            brand: '#059669',
+            /* Tailwind 기본 팔레트에 없는 중간 계열 보강 (코드 전반에서 사용 중) */
+            slate: { 350: '#a9b4c2', 450: '#7c8aa0', 650: '#3e4c5f', 750: '#293548', 850: '#172033' },
+            emerald: { 450: '#2fbb85', 650: '#04875f' },
+            red: { 450: '#f35a5a' }
           }
         }
       }
@@ -46,6 +50,16 @@
     .spinner { border: 2.5px solid rgba(255,255,255,0.3); border-radius: 50%; border-top-color: #fff; animation: spin 0.8s ease-in-out infinite; width: 14px; height: 14px; display: inline-block; }
     .spinner-brand { border: 2.5px solid rgba(5,150,105,0.2); border-radius: 50%; border-top-color: #059669; animation: spin 0.8s ease-in-out infinite; width: 32px; height: 32px; }
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Gamification: floating XP + pops */
+    @keyframes xpFloat {
+      0%   { opacity: 0; transform: translateY(12px) scale(0.8); }
+      20%  { opacity: 1; transform: translateY(0) scale(1.05); }
+      100% { opacity: 0; transform: translateY(-46px) scale(1); }
+    }
+    .xp-float { animation: xpFloat 1.2s ease-out forwards; }
+    @keyframes popIn { 0% { transform: scale(0.6); opacity: 0; } 60% { transform: scale(1.15); } 100% { transform: scale(1); opacity: 1; } }
+    .pop-in { animation: popIn 0.35s ease-out; }
   </style>
 </head>
 <body class="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans antialiased min-h-screen transition-colors duration-300">
@@ -63,6 +77,46 @@
       timerDuration: 7,
       intervals: { 1: 1, 2: 3, 3: 7, 4: 14, 5: 30, 6: 60, 7: 90 }
     };
+
+    // --- Gamification Constants & Helpers (Phase 3) ---
+    const XP_PER_CORRECT = 10;   // MASTERED
+    const XP_PER_WRONG = 3;      // FAILED (effort reward)
+    const MAX_HEARTS = 5;
+    const DEFAULT_DAILY_GOAL = 30;
+    const GAMI_KEY = (uid) => 'agri_gami_v1_' + uid;
+
+    const dateStr = (d = new Date()) => d.toISOString().split('T')[0];
+    const todayStr = () => dateStr();
+    const yesterdayStr = () => { const d = new Date(); d.setDate(d.getDate() - 1); return dateStr(d); };
+
+    // Cumulative XP for reaching level n = 50 * n * (n-1)  → L1:0, L2:100, L3:300, L4:600, L5:1000 ...
+    const levelInfo = (xp) => {
+      const x = Math.max(0, xp || 0);
+      let level = 1;
+      while (50 * (level + 1) * level <= x) level++;
+      const curBase = 50 * level * (level - 1);
+      const nextBase = 50 * (level + 1) * level;
+      return { level, into: x - curBase, span: nextBase - curBase, nextBase };
+    };
+
+    const freshGami = () => ({
+      xp: 0, streak: 0, longestStreak: 0, lastStudyDate: null,
+      hearts: MAX_HEARTS, heartsDate: todayStr(),
+      todayXp: 0, xpDate: todayStr(),
+      dailyGoal: DEFAULT_DAILY_GOAL, goalCelebratedDate: null
+    });
+
+    // Apply daily rollovers (hearts refill, today's XP reset) to a loaded gami object
+    const rolloverGami = (g) => {
+      const t = todayStr();
+      const next = { ...freshGami(), ...g };
+      if (next.heartsDate !== t) { next.hearts = MAX_HEARTS; next.heartsDate = t; }
+      if (next.xpDate !== t) { next.todayXp = 0; next.xpDate = t; }
+      return next;
+    };
+
+    // Streak is "alive" only if the last study was today or yesterday
+    const streakAlive = (g) => g && (g.lastStudyDate === todayStr() || g.lastStudyDate === yesterdayStr());
 
     // --- Google Pay Constants ---
     const GOOGLE_PAY_BASE_REQUEST = {
@@ -183,6 +237,10 @@
       const [toasts, setToasts] = useState([]);
       const [genStep, setGenStep] = useState(1);
 
+      // Gamification State (Phase 3) — persisted per user in localStorage
+      const [gami, setGami] = useState(null);
+      const [xpFloats, setXpFloats] = useState([]);
+
       const showToast = (message, type = 'success') => {
         const id = Date.now() + Math.random().toString(36).substr(2, 9);
         setToasts(prev => [...prev, { id, message, type }]);
@@ -240,6 +298,57 @@
           localStorage.setItem('agri_pro_api_v5', apiKey);
         }
       }, [isDarkMode, apiKey, isLoaded]);
+
+      // 4b. Gamification: load per-user profile from localStorage (with daily rollovers)
+      useEffect(() => {
+        if (!user) { setGami(null); return; }
+        let stored = null;
+        try { stored = JSON.parse(localStorage.getItem(GAMI_KEY(user.id))); } catch (e) { stored = null; }
+        setGami(rolloverGami(stored || freshGami()));
+      }, [user]);
+
+      // 4c. Gamification: persist on change
+      useEffect(() => {
+        if (user && gami) localStorage.setItem(GAMI_KEY(user.id), JSON.stringify(gami));
+      }, [gami, user]);
+
+      // Award XP for a study action; handles streak, level-up, daily goal, hearts + floating feedback
+      const awardXp = (amount, wrong = false) => {
+        if (!gami) return;
+        const t = todayStr(), y = yesterdayStr();
+        let g = rolloverGami(gami);
+        const msgs = [];
+
+        // Streak: count once per day; extend if yesterday, else restart
+        if (g.lastStudyDate !== t) {
+          g.streak = (g.lastStudyDate === y) ? (g.streak || 0) + 1 : 1;
+          g.lastStudyDate = t;
+          if (g.streak > (g.longestStreak || 0)) g.longestStreak = g.streak;
+          msgs.push([`🔥 ${g.streak}일 연속 학습!`, 'success']);
+        }
+
+        const beforeLevel = levelInfo(g.xp).level;
+        g.xp = (g.xp || 0) + amount;
+        g.todayXp = (g.todayXp || 0) + amount;
+        if (wrong) g.hearts = Math.max(0, (g.hearts || 0) - 1);
+
+        const afterLevel = levelInfo(g.xp).level;
+        if (afterLevel > beforeLevel) msgs.push([`🎉 레벨 ${afterLevel} 달성!`, 'success']);
+
+        if (g.todayXp >= g.dailyGoal && g.goalCelebratedDate !== t) {
+          g.goalCelebratedDate = t;
+          msgs.push([`🏆 오늘의 목표 ${g.dailyGoal} XP 달성!`, 'success']);
+        }
+
+        setGami(g);
+        msgs.forEach(m => showToast(m[0], m[1]));
+
+        const fid = Date.now() + Math.random();
+        setXpFloats(f => [...f, { id: fid, amount, wrong }]);
+        setTimeout(() => setXpFloats(f => f.filter(x => x.id !== fid)), 1200);
+      };
+
+      const setDailyGoal = (goal) => setGami(g => g ? { ...g, dailyGoal: goal } : g);
 
       // 5. Google Pay Actions & Button Handler
       const handleGooglePayClicked = () => {
@@ -523,13 +632,16 @@
           if (error) throw error;
 
           // Update local state
-          setCards(cards.map(c => c.id === card.id ? { 
-            ...c, 
-            stage: newStage, 
-            is_graduated: newStage === 7, 
-            last_reviewed_at: todayStr, 
-            next_review_at: nextDateStr 
+          setCards(cards.map(c => c.id === card.id ? {
+            ...c,
+            stage: newStage,
+            is_graduated: newStage === 7,
+            last_reviewed_at: todayStr,
+            next_review_at: nextDateStr
           } : c));
+
+          // Gamification: reward XP (and dock a heart on failure)
+          awardXp(isKnown ? XP_PER_CORRECT : XP_PER_WRONG, !isKnown);
 
           if (currentIndex < sessionDeck.length - 1) {
             setCurrentIndex(p => p + 1);
@@ -887,6 +999,24 @@
         </button>
       );
 
+      const DailyGoalRing = ({ todayXp, goal }) => {
+        const pct = Math.min(100, goal > 0 ? (todayXp / goal) * 100 : 0);
+        const r = 13, circ = 2 * Math.PI * r;
+        const done = todayXp >= goal && goal > 0;
+        return (
+          <div className="relative w-9 h-9 flex items-center justify-center shrink-0" title={`오늘 ${todayXp} / ${goal} XP`}>
+            <svg className="w-9 h-9 -rotate-90" viewBox="0 0 32 32">
+              <circle cx="16" cy="16" r={r} fill="none" strokeWidth="3" className="stroke-slate-200 dark:stroke-slate-800" />
+              <circle cx="16" cy="16" r={r} fill="none" strokeWidth="3" strokeLinecap="round" className="stroke-emerald-500 transition-all duration-500"
+                strokeDasharray={circ} strokeDashoffset={circ - (circ * pct) / 100} />
+            </svg>
+            <span className="absolute text-[9px] font-black text-slate-600 dark:text-slate-300">{done ? '✓' : Math.round(pct)}</span>
+          </div>
+        );
+      };
+
+      const lvl = gami ? levelInfo(gami.xp) : null;
+
       // --- SaaS Active Authenticated Interface ---
       return (
         <div className="flex flex-col min-h-screen max-w-lg mx-auto bg-white dark:bg-slate-900 shadow-2xl relative border-x border-slate-100 dark:border-slate-800 transition-colors duration-300">
@@ -916,8 +1046,36 @@
               <div className="text-[10px] bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-md font-bold text-slate-500 dark:text-slate-400">
                 {profile?.tier === 'Pro' ? 'Pro Tier' : 'Free Tier'}
               </div>
+              <button
+                onClick={handleSignOut}
+                title="로그아웃"
+                className="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950/30 dark:hover:text-red-400 transition-all"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7M13 16v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                </svg>
+              </button>
             </div>
           </header>
+
+          {/* Gamification Stats Strip */}
+          {gami && lvl && (
+            <div className="px-5 py-2.5 flex items-center gap-3 border-b border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 transition-colors duration-300">
+              <div className={`flex items-center gap-1 text-sm font-black ${streakAlive(gami) ? 'text-orange-500' : 'text-slate-300 dark:text-slate-600'}`} title="연속 학습일">
+                <span>🔥</span><span>{streakAlive(gami) ? gami.streak : 0}</span>
+              </div>
+              <div className="flex items-center gap-1 text-sm font-black text-red-500" title="오늘 남은 하트">
+                <span>❤️</span><span>{gami.hearts}</span>
+              </div>
+              <div className="flex-1 flex items-center gap-2 min-w-0">
+                <span className="text-[10px] font-black text-white bg-emerald-600 rounded-full px-2 py-0.5 shrink-0">Lv {lvl.level}</span>
+                <div className="flex-1 h-2 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden" title={`${lvl.into} / ${lvl.span} XP`}>
+                  <div className="h-full bg-gradient-to-r from-emerald-500 to-emerald-400 transition-all duration-500" style={{ width: `${(lvl.into / lvl.span) * 100}%` }}></div>
+                </div>
+              </div>
+              <DailyGoalRing todayXp={gami.todayXp} goal={gami.dailyGoal} />
+            </div>
+          )}
 
           <main className="flex-1 overflow-y-auto px-6 py-8 safe-bottom">
             
@@ -968,7 +1126,21 @@
                   <div className="text-center py-24 fade-in">
                     <div className="w-20 h-20 bg-emerald-100 dark:bg-emerald-950/40 rounded-full flex items-center justify-center mx-auto mb-8 text-emerald-600 dark:text-emerald-400 text-3xl">✓</div>
                     <h3 className="text-2xl font-black text-slate-800 dark:text-slate-200 mb-3">당일 학습 완료</h3>
-                    <p className="text-slate-500 dark:text-slate-400 text-sm mb-10 leading-relaxed">오늘 배정된 인출 훈련을 모두 마쳤습니다.<br/>망각 곡선 주기에 따라 내일 새로운 세션이 생성됩니다.</p>
+                    <p className="text-slate-500 dark:text-slate-400 text-sm mb-6 leading-relaxed">오늘 배정된 인출 훈련을 모두 마쳤습니다.<br/>망각 곡선 주기에 따라 내일 새로운 세션이 생성됩니다.</p>
+                    {gami && (
+                      <div className="inline-flex items-center gap-4 bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 rounded-2xl px-6 py-3 mb-10">
+                        <div className="text-center">
+                          <p className="text-lg font-black text-emerald-600 dark:text-emerald-400 leading-none">⚡ {gami.todayXp}</p>
+                          <p className="text-[9px] font-bold text-slate-400 uppercase mt-1">오늘 XP</p>
+                        </div>
+                        <div className="w-px h-8 bg-slate-200 dark:bg-slate-700"></div>
+                        <div className="text-center">
+                          <p className="text-lg font-black text-orange-500 leading-none">🔥 {streakAlive(gami) ? gami.streak : 0}</p>
+                          <p className="text-[9px] font-bold text-slate-400 uppercase mt-1">연속 학습</p>
+                        </div>
+                      </div>
+                    )}
+                    <br/>
                     <button onClick={startStudy} className="text-emerald-600 dark:text-emerald-400 font-bold text-sm hover:underline">데이터 다시 불러오기</button>
                   </div>
                 )}
@@ -982,6 +1154,40 @@
                   <h3 className="text-lg font-black text-slate-800 dark:text-slate-200 mb-1">학습 진척도 대시보드</h3>
                   <p className="text-xs text-slate-400 dark:text-slate-500">라이트너 박스 망각 단계 분포와 스케줄을 점검합니다.</p>
                 </div>
+
+                {/* Gamification Summary Card */}
+                {gami && lvl && (
+                  <div className="p-6 bg-gradient-to-br from-emerald-600 to-emerald-700 dark:from-emerald-700 dark:to-emerald-800 rounded-3xl text-white shadow-lg">
+                    <div className="flex items-center justify-between mb-5">
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-emerald-100/80">Level</p>
+                        <p className="text-4xl font-black leading-none mt-1">{lvl.level}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-emerald-100/80">Total XP</p>
+                        <p className="text-2xl font-black leading-none mt-1">{gami.xp.toLocaleString()}</p>
+                      </div>
+                    </div>
+                    <div className="h-2 bg-white/20 rounded-full overflow-hidden mb-2">
+                      <div className="h-full bg-white transition-all duration-500" style={{ width: `${(lvl.into / lvl.span) * 100}%` }}></div>
+                    </div>
+                    <p className="text-[10px] text-emerald-100/80 font-bold text-right mb-5">다음 레벨까지 {lvl.span - lvl.into} XP</p>
+                    <div className="grid grid-cols-3 gap-3 text-center">
+                      <div className="bg-white/10 rounded-2xl py-3">
+                        <p className="text-lg font-black leading-none">🔥 {streakAlive(gami) ? gami.streak : 0}</p>
+                        <p className="text-[9px] font-bold text-emerald-100/80 mt-1.5 uppercase">연속 학습</p>
+                      </div>
+                      <div className="bg-white/10 rounded-2xl py-3">
+                        <p className="text-lg font-black leading-none">⚡ {gami.todayXp}</p>
+                        <p className="text-[9px] font-bold text-emerald-100/80 mt-1.5 uppercase">오늘 XP</p>
+                      </div>
+                      <div className="bg-white/10 rounded-2xl py-3">
+                        <p className="text-lg font-black leading-none">🏆 {gami.longestStreak}</p>
+                        <p className="text-[9px] font-bold text-emerald-100/80 mt-1.5 uppercase">최고 기록</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Metric Summary Grid */}
                 <div className="grid grid-cols-3 gap-3">
@@ -1278,6 +1484,37 @@
                   )}
                 </section>
 
+                {/* Daily Goal Configuration Card */}
+                {gami && (
+                  <section className="bg-slate-50 dark:bg-slate-850 p-6 rounded-3xl border border-slate-100 dark:border-slate-800/60 shadow-sm space-y-4">
+                    <div>
+                      <h3 className="text-xs font-black text-slate-800 dark:text-slate-200 uppercase tracking-widest">일일 학습 목표</h3>
+                      <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">매일 달성할 XP 목표를 설정하세요. 연속 학습(스트릭)을 이어가는 동기가 됩니다.</p>
+                    </div>
+                    <div className="grid grid-cols-4 gap-2">
+                      {[
+                        { g: 20, label: '가볍게' },
+                        { g: 30, label: '보통' },
+                        { g: 50, label: '성실히' },
+                        { g: 100, label: '집중' }
+                      ].map(opt => (
+                        <button
+                          key={opt.g}
+                          onClick={() => setDailyGoal(opt.g)}
+                          className={`py-3 rounded-2xl text-center transition-all border-2 ${
+                            gami.dailyGoal === opt.g
+                              ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400'
+                              : 'border-slate-100 dark:border-slate-800 text-slate-500 dark:text-slate-400 hover:border-slate-200 dark:hover:border-slate-700'
+                          }`}
+                        >
+                          <p className="text-base font-black leading-none">{opt.g}</p>
+                          <p className="text-[9px] font-bold mt-1">{opt.label}</p>
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
                 {/* Gemini API Key Configuration Card */}
                 <section className="bg-slate-50 dark:bg-slate-850 p-6 rounded-3xl border border-slate-100 dark:border-slate-800/60 shadow-sm">
                   <h3 className="text-xs font-black text-slate-800 dark:text-slate-200 mb-4 uppercase tracking-widest">Gemini API Configuration</h3>
@@ -1347,6 +1584,15 @@
                 >
                   ✕
                 </button>
+              </div>
+            ))}
+          </div>
+
+          {/* Floating XP feedback */}
+          <div className="fixed inset-x-0 bottom-28 z-[9998] flex flex-col items-center gap-1 pointer-events-none">
+            {xpFloats.map(x => (
+              <div key={x.id} className={`xp-float text-xl font-black drop-shadow ${x.wrong ? 'text-red-500' : 'text-emerald-500'}`}>
+                +{x.amount} XP {x.wrong ? '💔' : '⚡'}
               </div>
             ))}
           </div>
