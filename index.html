@@ -78,6 +78,17 @@
       intervals: { 1: 1, 2: 3, 3: 7, 4: 14, 5: 30, 6: 60, 7: 90 }
     };
 
+    // Study exercise modes (Phase 2). 'mixed' randomizes per card.
+    const STUDY_MODES = [
+      { id: 'flashcard', label: '🃏 카드' },
+      { id: 'choice', label: '📝 객관식' },
+      { id: 'typing', label: '⌨️ 받아쓰기' },
+      { id: 'mixed', label: '🔀 믹스' }
+    ];
+    const AUTO_MODES = ['flashcard', 'choice', 'typing']; // modes assignable in 'mixed'
+    // normalize an English answer for typing comparison
+    const normAnswer = (s) => (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+
     // --- Gamification Constants & Helpers (Phase 3) ---
     const XP_PER_CORRECT = 10;   // MASTERED
     const XP_PER_WRONG = 3;      // FAILED (effort reward)
@@ -242,6 +253,28 @@
       const [isRevealed, setIsRevealed] = useState(false);
       const [timeLeft, setTimeLeft] = useState(7);
 
+      // Exercise mode state (Phase 2)
+      const [studyMode, setStudyMode] = useState('flashcard'); // flashcard | choice | typing | mixed
+      const [selectedChoice, setSelectedChoice] = useState(null); // chosen option id (choice mode)
+      const [typeInput, setTypeInput] = useState('');            // typed answer (typing mode)
+      const [answerState, setAnswerState] = useState(null);      // null | 'correct' | 'wrong' (auto-graded modes)
+
+      // Current card + its effective exercise mode (mixed → per-card _mode)
+      const currentCard = sessionDeck[currentIndex] || null;
+      const currentMode = currentCard
+        ? (studyMode === 'mixed' ? (currentCard._mode || 'flashcard') : studyMode)
+        : 'flashcard';
+
+      // Multiple-choice options: correct meaning + up to 3 distractors, shuffled
+      const choiceOptions = useMemo(() => {
+        if (!currentCard || currentMode !== 'choice') return [];
+        const pool = cards.filter(c => c.id !== currentCard.id && c.meaning);
+        const distractors = [...pool].sort(() => Math.random() - 0.5).slice(0, 3);
+        return [...distractors, currentCard]
+          .map(c => ({ id: c.id, text: c.meaning }))
+          .sort(() => Math.random() - 0.5);
+      }, [currentCard, currentMode, cards]);
+
       // AI Generation State
       const [genKeyword, setGenKeyword] = useState("");
       const [isGenerating, setIsGenerating] = useState(false);
@@ -293,8 +326,10 @@
         const storedTheme = localStorage.getItem('agri_pro_theme_v5');
         const storedApi = localStorage.getItem('agri_pro_api_v5');
         const storedAutoSpeak = localStorage.getItem('agri_pro_autospeak_v1');
+        const storedMode = localStorage.getItem('agri_pro_studymode_v1');
         if (storedApi) setApiKey(storedApi);
         if (storedAutoSpeak !== null) setAutoSpeak(storedAutoSpeak === 'true');
+        if (storedMode && STUDY_MODES.some(m => m.id === storedMode)) setStudyMode(storedMode);
         if (storedTheme === 'dark') {
           setIsDarkMode(true);
           document.documentElement.classList.add('dark');
@@ -323,8 +358,9 @@
           localStorage.setItem('agri_pro_theme_v5', isDarkMode ? 'dark' : 'light');
           localStorage.setItem('agri_pro_api_v5', apiKey);
           localStorage.setItem('agri_pro_autospeak_v1', String(autoSpeak));
+          localStorage.setItem('agri_pro_studymode_v1', studyMode);
         }
-      }, [isDarkMode, apiKey, autoSpeak, isLoaded]);
+      }, [isDarkMode, apiKey, autoSpeak, studyMode, isLoaded]);
 
       // 4b. Gamification: load per-user profile from localStorage (with daily rollovers)
       useEffect(() => {
@@ -480,6 +516,7 @@
       // 7. Study Session Timer Effect (Decrement timeLeft every second when active and not revealed)
       useEffect(() => {
         if (activeTab !== 'study' || sessionDeck.length === 0 || isRevealed) return;
+        if (currentMode !== 'flashcard') return; // timer only applies to flashcard recall
         if (timeLeft <= 0) {
           setIsRevealed(true);
           return;
@@ -490,7 +527,7 @@
         }, 1000);
 
         return () => clearTimeout(timer);
-      }, [activeTab, sessionDeck, isRevealed, timeLeft]);
+      }, [activeTab, sessionDeck, isRevealed, timeLeft, currentMode]);
 
       // Auto-pronounce the English term when a card is revealed
       useEffect(() => {
@@ -628,13 +665,19 @@
       };
 
       // --- Study Session Actions ---
+      const resetAnswer = () => { setSelectedChoice(null); setTypeInput(''); setAnswerState(null); };
+
       const startStudy = () => {
         const today = new Date().toISOString().split('T')[0];
         const due = cards.filter(c => !c.is_graduated && c.next_review_at <= today);
-        setSessionDeck(due.sort(() => Math.random() - 0.5));
+        const deck = due
+          .sort(() => Math.random() - 0.5)
+          .map(c => ({ ...c, _mode: AUTO_MODES[Math.floor(Math.random() * AUTO_MODES.length)] }));
+        setSessionDeck(deck);
         setCurrentIndex(0);
         setIsRevealed(false);
         setTimeLeft(config.timerDuration);
+        resetAnswer();
       };
 
       useEffect(() => {
@@ -681,12 +724,31 @@
             setCurrentIndex(p => p + 1);
             setIsRevealed(false);
             setTimeLeft(config.timerDuration);
+            resetAnswer();
           } else {
-            setSessionDeck([]); 
+            setSessionDeck([]);
+            resetAnswer();
           }
         } catch (err) {
           alert("학습 상태 저장 실패: " + err.message);
         }
+      };
+
+      // Auto-graded answer handlers (choice / typing modes)
+      const answerChoice = (opt) => {
+        if (answerState || !currentCard) return;
+        const correct = opt.id === currentCard.id;
+        setSelectedChoice(opt.id);
+        setAnswerState(correct ? 'correct' : 'wrong');
+        if (autoSpeak) speak(currentCard.term);
+      };
+
+      const submitTyping = (e) => {
+        e.preventDefault();
+        if (answerState || !currentCard) return;
+        const correct = normAnswer(typeInput) === normAnswer(currentCard.term);
+        setAnswerState(correct ? 'correct' : 'wrong');
+        if (autoSpeak) speak(currentCard.term);
       };
 
       // --- AI Word Generator Logic ---
@@ -1118,11 +1180,101 @@
               <div className="fade-in">
                 {sessionDeck.length > 0 && currentIndex < sessionDeck.length ? (
                   <div className="flex flex-col items-center">
-                    <div className="w-full bg-slate-100 dark:bg-slate-800 h-1 rounded-full mb-10 overflow-hidden">
-                      <div className={`h-full transition-all duration-1000 ${timeLeft <= 2 ? 'timer-critical' : 'bg-slate-800 dark:bg-slate-200'}`} style={{ width: `${isRevealed ? 0 : (timeLeft / config.timerDuration) * 100}%` }}></div>
+                    {/* Exercise mode selector (Phase 2) */}
+                    <div className="w-full flex gap-1 bg-slate-100 dark:bg-slate-800 rounded-2xl p-1 mb-5">
+                      {STUDY_MODES.map(m => (
+                        <button key={m.id} onClick={() => { setStudyMode(m.id); resetAnswer(); setIsRevealed(false); setTimeLeft(config.timerDuration); }}
+                          className={`flex-1 py-2 rounded-xl text-[10px] font-black transition-all ${studyMode === m.id ? 'bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 shadow' : 'text-slate-400 dark:text-slate-500'}`}>
+                          {m.label}
+                        </button>
+                      ))}
                     </div>
 
+                    {/* Progress counter */}
+                    <div className="w-full flex items-center justify-between mb-3 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">
+                      <span>{currentMode === 'flashcard' ? '카드 리콜' : currentMode === 'choice' ? '객관식' : '받아쓰기'}</span>
+                      <span>{currentIndex + 1} / {sessionDeck.length}</span>
+                    </div>
+
+                    {currentMode === 'flashcard' && (
+                      <div className="w-full bg-slate-100 dark:bg-slate-800 h-1 rounded-full mb-10 overflow-hidden">
+                        <div className={`h-full transition-all duration-1000 ${timeLeft <= 2 ? 'timer-critical' : 'bg-slate-800 dark:bg-slate-200'}`} style={{ width: `${isRevealed ? 0 : (timeLeft / config.timerDuration) * 100}%` }}></div>
+                      </div>
+                    )}
+
                     <div className="w-full text-center min-h-[420px] flex flex-col justify-center">
+                      {currentMode === 'choice' ? (
+                        <div className="fade-in w-full">
+                          <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-4">뜻을 고르세요</p>
+                          <div className="flex items-center justify-center gap-3 mb-8">
+                            <h2 className="text-4xl font-black text-slate-900 dark:text-white tracking-tight">{currentCard.term}</h2>
+                            {speechSupported && (
+                              <button onClick={() => speak(currentCard.term)} title="발음 듣기" aria-label="발음 듣기" className="w-10 h-10 shrink-0 flex items-center justify-center rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 active:scale-90 transition-all text-xl">🔊</button>
+                            )}
+                          </div>
+                          <div className="space-y-3">
+                            {choiceOptions.map(opt => {
+                              const chosen = selectedChoice === opt.id;
+                              const isAns = opt.id === currentCard.id;
+                              let cls = 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:border-emerald-400 dark:hover:border-emerald-500';
+                              if (answerState) {
+                                if (isAns) cls = 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-500 text-emerald-700 dark:text-emerald-300';
+                                else if (chosen) cls = 'bg-red-50 dark:bg-red-950/20 border-red-400 text-red-600 dark:text-red-400';
+                                else cls = 'bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 text-slate-300 dark:text-slate-600';
+                              }
+                              return (
+                                <button key={opt.id} disabled={!!answerState} onClick={() => answerChoice(opt)} className={`w-full py-4 px-5 rounded-2xl border-2 font-bold text-left text-sm transition-all active:scale-[0.98] ${cls}`}>
+                                  {opt.text}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          {answerState && (
+                            <div className="fade-in mt-8">
+                              <p className={`font-black mb-4 ${answerState === 'correct' ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-500'}`}>{answerState === 'correct' ? '정답입니다! ⚡ +10 XP' : '오답 — 정답(초록)을 확인하세요'}</p>
+                              <div className="bg-slate-50 dark:bg-slate-800/30 p-5 rounded-2xl text-left border border-slate-100 dark:border-slate-800 mb-8">
+                                <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase mb-2">예문</p>
+                                <p className="text-slate-700 dark:text-slate-300 text-sm italic leading-relaxed">"{currentCard.context_sentence}"</p>
+                              </div>
+                              <button onClick={() => handleEvaluate(answerState === 'correct')} className="w-full bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 py-4 rounded-2xl font-black shadow-lg active:scale-95 transition-all">다음 →</button>
+                            </div>
+                          )}
+                        </div>
+                      ) : currentMode === 'typing' ? (
+                        <div className="fade-in w-full">
+                          <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-4">뜻을 보고 영어 스펠링을 입력하세요</p>
+                          <p className="text-3xl font-bold text-emerald-600 dark:text-emerald-400 mb-3">{currentCard.meaning}</p>
+                          <div className="mb-8 flex flex-wrap justify-center gap-1.5 text-[10px] font-mono text-slate-400 dark:text-slate-500">
+                            {currentCard.morphology.prefix && <span>[{currentCard.morphology.prefix}]</span>}
+                            {currentCard.morphology.root && <span className="font-bold text-slate-600 dark:text-slate-300">[{currentCard.morphology.root}]</span>}
+                            {currentCard.morphology.suffix && <span>[{currentCard.morphology.suffix}]</span>}
+                          </div>
+                          {!answerState ? (
+                            <form onSubmit={submitTyping} className="w-full">
+                              <input autoFocus value={typeInput} onChange={e => setTypeInput(e.target.value)} autoComplete="off" autoCapitalize="none" spellCheck="false"
+                                className="w-full text-center text-2xl font-black bg-slate-50 dark:bg-slate-950 border-2 border-slate-200 dark:border-slate-700 rounded-2xl py-5 px-4 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-900 dark:text-white mb-4" placeholder="영어 단어 입력" />
+                              <button type="submit" className="w-full bg-emerald-600 text-white py-4 rounded-2xl font-black shadow-lg active:scale-95 transition-all">확인</button>
+                            </form>
+                          ) : (
+                            <div className="fade-in w-full">
+                              <p className={`font-black mb-2 ${answerState === 'correct' ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-500'}`}>{answerState === 'correct' ? '정답입니다! ⚡ +10 XP' : '아쉬워요'}</p>
+                              {answerState === 'wrong' && <p className="text-xs text-slate-400 dark:text-slate-500 line-through mb-2">{typeInput || '(빈칸)'}</p>}
+                              <div className="flex items-center justify-center gap-3 mb-6">
+                                <h2 className="text-4xl font-black text-slate-900 dark:text-white tracking-tight">{currentCard.term}</h2>
+                                {speechSupported && (
+                                  <button onClick={() => speak(currentCard.term)} title="발음 듣기" aria-label="발음 듣기" className="w-10 h-10 shrink-0 flex items-center justify-center rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 active:scale-90 transition-all text-xl">🔊</button>
+                                )}
+                              </div>
+                              <div className="bg-slate-50 dark:bg-slate-800/30 p-5 rounded-2xl text-left border border-slate-100 dark:border-slate-800 mb-8">
+                                <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase mb-2">예문</p>
+                                <p className="text-slate-700 dark:text-slate-300 text-sm italic leading-relaxed">"{currentCard.context_sentence}"</p>
+                              </div>
+                              <button onClick={() => handleEvaluate(answerState === 'correct')} className="w-full bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 py-4 rounded-2xl font-black shadow-lg active:scale-95 transition-all">다음 →</button>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <React.Fragment>
                       <div className="mb-8 flex flex-wrap justify-center gap-1.5 text-[10px] font-mono text-slate-400 dark:text-slate-500 bg-slate-50 dark:bg-slate-800/50 px-4 py-2 rounded-full border border-slate-100 dark:border-slate-800/80 mx-auto">
                         {sessionDeck[currentIndex].morphology.prefix && <span>[{sessionDeck[currentIndex].morphology.prefix}]</span>}
                         {sessionDeck[currentIndex].morphology.root && <span className="font-bold text-slate-700 dark:text-slate-300">[{sessionDeck[currentIndex].morphology.root}]</span>}
@@ -1172,6 +1324,8 @@
                             </button>
                           </div>
                         </div>
+                      )}
+                        </React.Fragment>
                       )}
                     </div>
                   </div>
