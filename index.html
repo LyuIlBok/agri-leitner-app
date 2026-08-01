@@ -265,6 +265,9 @@
       const [gameScreen, setGameScreen] = useState('hub'); // 'hub' | 'typing'
       const [tg, setTg] = useState({ status: 'ready', deck: [], idx: 0, input: '', score: 0, correctChars: 0, timeLeft: 60 }); // typing rush
 
+      // 당일 시험 (same-day quiz over today's words; does NOT touch SRS schedule)
+      const [exam, setExam] = useState(null); // null | { status:'active'|'done', deck, idx, score, options, selected, answered }
+
       // Current card + its effective exercise mode (mixed → per-card _mode)
       const currentCard = sessionDeck[currentIndex] || null;
       const currentMode = currentCard
@@ -816,6 +819,38 @@
         if (idx >= prev.deck.length) { deck = [...prev.deck].sort(() => Math.random() - 0.5); idx = 0; }
         return { ...prev, input: '', deck, idx };
       });
+
+      // --- 당일 시험 (same-day quiz) ---
+      const buildExamOptions = (card) => {
+        const pool = cards.filter(c => c.id !== card.id && c.meaning);
+        const distractors = [...pool].sort(() => Math.random() - 0.5).slice(0, 3);
+        return [...distractors, card].map(c => ({ id: c.id, text: c.meaning })).sort(() => Math.random() - 0.5);
+      };
+      const startExam = () => {
+        const today = todayStr();
+        const todays = cards.filter(c => c.last_reviewed_at === today);
+        const deck = (todays.length ? todays : cards).slice().sort(() => Math.random() - 0.5);
+        if (!deck.length) return;
+        setExam({ status: 'active', deck, idx: 0, score: 0, options: buildExamOptions(deck[0]), selected: null, answered: false });
+      };
+      const examAnswer = (opt) => {
+        setExam(prev => {
+          if (!prev || prev.answered) return prev;
+          const correct = opt.id === prev.deck[prev.idx].id;
+          return { ...prev, selected: opt.id, answered: true, score: prev.score + (correct ? 1 : 0) };
+        });
+        if (autoSpeak && exam && exam.deck[exam.idx]) speak(exam.deck[exam.idx].term);
+      };
+      const examNext = () => {
+        if (!exam) return;
+        const nextIdx = exam.idx + 1;
+        if (nextIdx >= exam.deck.length) {
+          if (exam.score > 0) awardXp(exam.score * 3); // 시험 정답당 +3 XP (SRS는 미변경)
+          setExam({ ...exam, status: 'done' });
+        } else {
+          setExam({ ...exam, idx: nextIdx, options: buildExamOptions(exam.deck[nextIdx]), selected: null, answered: false });
+        }
+      };
 
       // Typing Rush countdown; awards XP once when time runs out
       useEffect(() => {
@@ -1449,7 +1484,7 @@
                         </div>
                       </div>
                     )}
-                    <br/>
+                    <button onClick={startExam} className="block mx-auto bg-emerald-600 hover:bg-emerald-700 text-white font-black px-8 py-3.5 rounded-2xl shadow-lg active:scale-95 transition-all mb-4">📝 오늘 배운 단어 시험 보기</button>
                     <button onClick={startStudy} className="text-emerald-600 dark:text-emerald-400 font-bold text-sm hover:underline">데이터 다시 불러오기</button>
                   </div>
                 )}
@@ -2044,6 +2079,67 @@
               </div>
             ))}
           </div>
+
+          {/* 당일 시험 Overlay */}
+          {exam && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 dark:bg-black/70 backdrop-blur-sm p-4">
+              <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-[32px] p-8 shadow-2xl border border-slate-100 dark:border-slate-800 max-h-[90vh] overflow-y-auto animate-[fadeIn_0.2s_ease-out]">
+                {exam.status === 'active' ? (
+                  <div>
+                    <div className="flex items-center justify-between mb-5">
+                      <span className="text-[10px] font-black uppercase tracking-widest text-emerald-600 dark:text-emerald-400">📝 당일 시험 · {exam.idx + 1} / {exam.deck.length}</span>
+                      <button onClick={() => setExam(null)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-lg font-bold leading-none">✕</button>
+                    </div>
+                    <div className="w-full h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden mb-8">
+                      <div className="h-full bg-emerald-500 transition-all duration-300" style={{ width: `${(exam.idx / exam.deck.length) * 100}%` }}></div>
+                    </div>
+                    <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest text-center mb-3">뜻을 고르세요</p>
+                    <div className="flex items-center justify-center gap-2 mb-6">
+                      <h2 className="text-3xl font-black text-slate-900 dark:text-white text-center">{exam.deck[exam.idx].term}</h2>
+                      {speechSupported && (
+                        <button onClick={() => speak(exam.deck[exam.idx].term)} title="발음 듣기" className="w-8 h-8 shrink-0 flex items-center justify-center rounded-full bg-emerald-50 dark:bg-emerald-950/40 active:scale-90 transition-all">🔊</button>
+                      )}
+                    </div>
+                    <div className="space-y-2.5">
+                      {exam.options.map(opt => {
+                        const chosen = exam.selected === opt.id;
+                        const isAns = opt.id === exam.deck[exam.idx].id;
+                        let cls = 'bg-white dark:bg-slate-800/50 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:border-emerald-400 dark:hover:border-emerald-500';
+                        if (exam.answered) {
+                          if (isAns) cls = 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-500 text-emerald-700 dark:text-emerald-300';
+                          else if (chosen) cls = 'bg-red-50 dark:bg-red-950/20 border-red-400 text-red-600 dark:text-red-400';
+                          else cls = 'bg-white dark:bg-slate-800/50 border-slate-100 dark:border-slate-800 text-slate-300 dark:text-slate-600';
+                        }
+                        return (
+                          <button key={opt.id} disabled={exam.answered} onClick={() => examAnswer(opt)} className={`w-full py-3.5 px-4 rounded-2xl border-2 font-bold text-left text-sm transition-all ${cls}`}>
+                            {opt.text}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {exam.answered && (
+                      <button onClick={examNext} className="w-full mt-6 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 py-3.5 rounded-2xl font-black shadow-lg active:scale-95 transition-all">
+                        {exam.idx + 1 >= exam.deck.length ? '결과 보기' : '다음 →'}
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-center py-4">
+                    <div className="text-5xl mb-4">{exam.score === exam.deck.length ? '🏆' : exam.score >= exam.deck.length * 0.6 ? '🎉' : '💪'}</div>
+                    <h3 className="text-2xl font-black text-slate-800 dark:text-slate-100 mb-1">당일 시험 결과</h3>
+                    <p className="text-4xl font-black text-emerald-600 dark:text-emerald-400 my-4">{exam.score} <span className="text-slate-300 dark:text-slate-600">/ {exam.deck.length}</span></p>
+                    <p className="text-sm text-slate-500 dark:text-slate-400 mb-1">정답률 {Math.round((exam.score / exam.deck.length) * 100)}%</p>
+                    <p className="text-xs text-emerald-600 dark:text-emerald-400 font-bold mb-2">⚡ +{exam.score * 3} XP 획득</p>
+                    <p className="text-[10px] text-slate-400 dark:text-slate-500 mb-8">시험은 복습 일정(라이트너 단계)에 영향을 주지 않아요.</p>
+                    <div className="flex gap-3">
+                      <button onClick={() => setExam(null)} className="flex-1 py-3.5 font-black text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 transition-all">닫기</button>
+                      <button onClick={startExam} className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-3.5 rounded-2xl font-black shadow-lg active:scale-95 transition-all">다시 시험</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Manual Add & Edit Modal */}
           {isModalOpen && (
