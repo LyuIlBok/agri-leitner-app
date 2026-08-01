@@ -89,6 +89,64 @@
     // normalize an English answer for typing comparison
     const normAnswer = (s) => (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
 
+    // --- Mini crossword generator (greedy on-the-fly from learned words) ---
+    const generateCrossword = (rawWords, maxWords = 7) => {
+      const words = rawWords
+        .map(w => ({ answer: (w.term || '').toUpperCase().replace(/[^A-Z]/g, ''), clue: w.meaning }))
+        .filter(w => w.answer.length >= 3 && w.answer.length <= 8)
+        .filter((w, i, a) => a.findIndex(x => x.answer === w.answer) === i)
+        .sort((a, b) => b.answer.length - a.answer.length);
+      if (words.length < 3) return null;
+      const grid = {}; const placed = [];
+      const key = (r, c) => r + ',' + c;
+      const canPlace = (answer, row, col, dir) => {
+        const dr = dir === 'down' ? 1 : 0, dc = dir === 'across' ? 1 : 0;
+        if (grid[key(row - dr, col - dc)]) return 0;
+        if (grid[key(row + dr * answer.length, col + dc * answer.length)]) return 0;
+        let inter = 0;
+        for (let i = 0; i < answer.length; i++) {
+          const r = row + dr * i, c = col + dc * i, ex = grid[key(r, c)];
+          if (ex) { if (ex !== answer[i]) return 0; inter++; }
+          else { const pr = dc, pc = dr; if (grid[key(r + pr, c + pc)] || grid[key(r - pr, c - pc)]) return 0; }
+        }
+        return inter;
+      };
+      const place = (answer, clue, row, col, dir) => {
+        const dr = dir === 'down' ? 1 : 0, dc = dir === 'across' ? 1 : 0;
+        for (let i = 0; i < answer.length; i++) grid[key(row + dr * i, col + dc * i)] = answer[i];
+        placed.push({ answer, clue, row, col, dir });
+      };
+      place(words[0].answer, words[0].clue, 0, 0, 'across');
+      for (let wi = 1; wi < words.length && placed.length < maxWords; wi++) {
+        const { answer, clue } = words[wi]; let best = null;
+        for (let i = 0; i < answer.length && !best; i++) {
+          for (const ck of Object.keys(grid)) {
+            if (grid[ck] !== answer[i]) continue;
+            const [cr, cc] = ck.split(',').map(Number);
+            for (const dir of ['down', 'across']) {
+              const dr = dir === 'down' ? 1 : 0, dc = dir === 'across' ? 1 : 0;
+              const row = cr - dr * i, col = cc - dc * i;
+              if (canPlace(answer, row, col, dir)) { best = { row, col, dir }; break; }
+            }
+            if (best) break;
+          }
+        }
+        if (best) place(answer, clue, best.row, best.col, best.dir);
+      }
+      if (placed.length < 3) return null;
+      let minR = Infinity, minC = Infinity, maxR = -Infinity, maxC = -Infinity;
+      for (const k of Object.keys(grid)) { const [r, c] = k.split(',').map(Number); minR = Math.min(minR, r); minC = Math.min(minC, c); maxR = Math.max(maxR, r); maxC = Math.max(maxC, c); }
+      const rows = maxR - minR + 1, cols = maxC - minC + 1;
+      const cells = {};
+      for (const k of Object.keys(grid)) { const [r, c] = k.split(',').map(Number); cells[(r - minR) + ',' + (c - minC)] = grid[k]; }
+      const words2 = placed.map(p => ({ ...p, row: p.row - minR, col: p.col - minC }));
+      const startSet = new Set(words2.map(w => w.row + ',' + w.col));
+      let num = 1; const numbering = {};
+      for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) { if (startSet.has(r + ',' + c)) numbering[r + ',' + c] = num++; }
+      const clues = words2.map(w => ({ ...w, num: numbering[w.row + ',' + w.col] })).sort((a, b) => a.num - b.num);
+      return { rows, cols, cells, numbering, clues };
+    };
+
     // --- Gamification Constants & Helpers (Phase 3) ---
     const XP_PER_CORRECT = 10;   // MASTERED
     const XP_PER_WRONG = 3;      // FAILED (effort reward)
@@ -267,6 +325,10 @@
 
       // 당일 시험 (same-day quiz over today's words; does NOT touch SRS schedule)
       const [exam, setExam] = useState(null); // null | { status:'active'|'done', deck, idx, score, options, selected, answered }
+
+      // 배틀 가로세로 (mini crossword, time-attack)
+      const [cw, setCw] = useState(null); // null | { status, won, rows, cols, cells, numbering, clues, inputs, timeLeft, earned }
+      const cwAwarded = useRef(false);
 
       // Current card + its effective exercise mode (mixed → per-card _mode)
       const currentCard = sessionDeck[currentIndex] || null;
@@ -851,6 +913,45 @@
           setExam({ ...exam, idx: nextIdx, options: buildExamOptions(exam.deck[nextIdx]), selected: null, answered: false });
         }
       };
+
+      // --- 배틀 가로세로 (mini crossword) ---
+      const CROSSWORD_TIME = 180; // seconds
+      const startCrossword = () => {
+        const p = generateCrossword(cards.map(c => ({ term: c.term, meaning: c.meaning })));
+        if (!p) return; // not enough suitable words
+        cwAwarded.current = false;
+        setCw({ ...p, status: 'active', won: false, inputs: {}, timeLeft: CROSSWORD_TIME, earned: 0 });
+      };
+      const setCwCell = (rc, val) => {
+        const ch = (val || '').toUpperCase().replace(/[^A-Z]/g, '').slice(-1);
+        setCw(prev => {
+          if (!prev || prev.status !== 'active') return prev;
+          const inputs = { ...prev.inputs, [rc]: ch };
+          const allCorrect = Object.keys(prev.cells).every(k => inputs[k] === prev.cells[k]);
+          if (allCorrect) {
+            const earned = 20 + Math.floor(prev.timeLeft / 6); // base + speed bonus
+            return { ...prev, inputs, status: 'done', won: true, earned };
+          }
+          return { ...prev, inputs };
+        });
+      };
+
+      // Crossword countdown
+      useEffect(() => {
+        if (!cw || cw.status !== 'active') return;
+        if (cw.timeLeft <= 0) { setCw(prev => prev ? { ...prev, status: 'done', won: false } : prev); return; }
+        const t = setTimeout(() => setCw(prev => (prev && prev.status === 'active') ? { ...prev, timeLeft: prev.timeLeft - 1 } : prev), 1000);
+        return () => clearTimeout(t);
+      }, [cw && cw.status, cw && cw.timeLeft]);
+
+      // Award XP once on crossword solve
+      useEffect(() => {
+        if (cw && cw.status === 'done' && cw.won && !cwAwarded.current) {
+          cwAwarded.current = true;
+          awardXp(cw.earned || 20);
+        }
+        if (!cw || cw.status === 'active') cwAwarded.current = false;
+      }, [cw && cw.status]);
 
       // Typing Rush countdown; awards XP once when time runs out
       useEffect(() => {
@@ -1509,15 +1610,18 @@
                       <h4 className="text-xl font-black">타자 러시</h4>
                       <p className="text-xs text-emerald-100/90 mt-1">60초 안에 영어 단어를 최대한 빠르고 정확하게 입력!</p>
                     </button>
-                    <div className="w-full text-left p-6 bg-slate-100 dark:bg-slate-800/50 rounded-3xl text-slate-400 dark:text-slate-500 relative overflow-hidden">
-                      <span className="absolute right-5 top-5 text-[10px] font-black bg-slate-200 dark:bg-slate-700 px-2 py-1 rounded-full">준비중</span>
+                    <button
+                      onClick={() => { setGameScreen('crossword'); setCw(null); }}
+                      disabled={cards.length < 3}
+                      className="w-full text-left p-6 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-3xl text-white shadow-lg active:scale-95 transition-all disabled:opacity-50"
+                    >
                       <div className="text-3xl mb-2">🧩</div>
                       <h4 className="text-xl font-black">배틀 가로세로</h4>
-                      <p className="text-xs mt-1">뜻을 보고 영어 단어로 십자말풀이 — 곧 공개!</p>
-                    </div>
+                      <p className="text-xs text-indigo-100/90 mt-1">뜻을 보고 영어 단어로 십자말 채우기 · 3분 타임어택!</p>
+                    </button>
                     {!cards.length && <p className="text-[10px] text-slate-400 dark:text-slate-500 text-center pt-2">먼저 단어를 추가하면 게임을 즐길 수 있어요.</p>}
                   </div>
-                ) : (
+                ) : gameScreen === 'typing' ? (
                   <div className="fade-in">
                     <button onClick={() => { setGameScreen('hub'); setTg(t => ({ ...t, status: 'ready' })); }} className="text-xs font-bold text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 mb-4">← 게임 목록</button>
 
@@ -1581,6 +1685,75 @@
                         <div className="flex gap-3">
                           <button onClick={() => setGameScreen('hub')} className="flex-1 py-4 font-black text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 transition-all">게임 목록</button>
                           <button onClick={startTyping} className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-4 rounded-2xl font-black shadow-lg active:scale-95 transition-all">다시하기</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="fade-in">
+                    <button onClick={() => { setGameScreen('hub'); setCw(null); }} className="text-xs font-bold text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 mb-4">← 게임 목록</button>
+
+                    {!cw ? (
+                      <div className="text-center py-16">
+                        <div className="text-6xl mb-4">🧩</div>
+                        <h3 className="text-2xl font-black text-slate-800 dark:text-slate-100">배틀 가로세로</h3>
+                        <p className="text-sm text-slate-500 dark:text-slate-400 mt-3 mb-10 leading-relaxed">뜻(힌트)을 보고 영어 단어로<br/>십자말을 채우세요! 제한시간 3분.<br/><span className="text-[11px] text-slate-400">완성하면 남은 시간만큼 XP 보너스</span></p>
+                        <button onClick={startCrossword} disabled={cards.length < 3} className="bg-indigo-600 hover:bg-indigo-700 text-white font-black px-12 py-4 rounded-2xl shadow-lg active:scale-95 transition-all disabled:opacity-50">시작하기</button>
+                        {cards.length < 3 && <p className="text-[10px] text-slate-400 mt-4">단어가 3개 이상 있어야 해요.</p>}
+                      </div>
+                    ) : cw.status === 'active' ? (
+                      <div>
+                        <div className="flex items-center justify-between mb-4 text-sm font-black">
+                          <span className="text-slate-400 dark:text-slate-500">🧩 십자말</span>
+                          <span className={cw.timeLeft <= 30 ? 'text-red-500' : 'text-slate-400 dark:text-slate-500'}>⏱ {Math.floor(cw.timeLeft / 60)}:{String(cw.timeLeft % 60).padStart(2, '0')}</span>
+                        </div>
+                        <div className="overflow-x-auto pb-2 mb-6">
+                          <div className="inline-block">
+                            {Array.from({ length: cw.rows }).map((_, r) => (
+                              <div key={r} className="flex">
+                                {Array.from({ length: cw.cols }).map((_, c) => {
+                                  const rc = r + ',' + c; const sol = cw.cells[rc];
+                                  if (!sol) return <div key={c} className="w-8 h-8"></div>;
+                                  const n = cw.numbering[rc];
+                                  return (
+                                    <div key={c} className="relative w-8 h-8">
+                                      {n && <span className="absolute top-0 left-0.5 text-[7px] font-bold text-slate-400 dark:text-slate-500 leading-none z-10 pointer-events-none">{n}</span>}
+                                      <input value={cw.inputs[rc] || ''} onChange={e => setCwCell(rc, e.target.value)} maxLength={1} autoComplete="off" autoCapitalize="characters"
+                                        className="w-8 h-8 text-center text-sm font-black uppercase border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:bg-emerald-50 dark:focus:bg-emerald-950/40 focus:border-emerald-500" />
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4 text-left">
+                          <div>
+                            <p className="text-[10px] font-black uppercase text-slate-400 dark:text-slate-500 mb-2 tracking-widest">가로</p>
+                            {cw.clues.filter(cl => cl.dir === 'across').map(cl => (
+                              <p key={'a' + cl.num} className="text-[11px] text-slate-600 dark:text-slate-300 mb-1.5 leading-snug"><b className="text-slate-800 dark:text-slate-100">{cl.num}.</b> {cl.clue}</p>
+                            ))}
+                          </div>
+                          <div>
+                            <p className="text-[10px] font-black uppercase text-slate-400 dark:text-slate-500 mb-2 tracking-widest">세로</p>
+                            {cw.clues.filter(cl => cl.dir === 'down').map(cl => (
+                              <p key={'d' + cl.num} className="text-[11px] text-slate-600 dark:text-slate-300 mb-1.5 leading-snug"><b className="text-slate-800 dark:text-slate-100">{cl.num}.</b> {cl.clue}</p>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-center py-10">
+                        <div className="text-6xl mb-4">{cw.won ? '🏆' : '⏱'}</div>
+                        <h3 className="text-2xl font-black text-slate-800 dark:text-slate-100">{cw.won ? '완성!' : '시간 종료'}</h3>
+                        {cw.won ? (
+                          <p className="text-xs text-emerald-600 dark:text-emerald-400 font-bold mt-3 mb-8">남은 시간 {Math.floor(cw.timeLeft / 60)}:{String(cw.timeLeft % 60).padStart(2, '0')} · ⚡ +{cw.earned} XP</p>
+                        ) : (
+                          <p className="text-sm text-slate-500 dark:text-slate-400 mt-3 mb-8">아쉬워요! 정답: <span className="font-bold text-slate-700 dark:text-slate-200">{cw.clues.map(cl => cl.answer.toLowerCase()).join(', ')}</span></p>
+                        )}
+                        <div className="flex gap-3">
+                          <button onClick={() => { setGameScreen('hub'); setCw(null); }} className="flex-1 py-4 font-black text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 transition-all">게임 목록</button>
+                          <button onClick={startCrossword} className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white py-4 rounded-2xl font-black shadow-lg active:scale-95 transition-all">새 퍼즐</button>
                         </div>
                       </div>
                     )}
