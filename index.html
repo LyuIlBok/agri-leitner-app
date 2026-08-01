@@ -1757,38 +1757,33 @@
                           <span className="text-slate-400 dark:text-slate-500">🧩 십자말</span>
                           <span className={cw.timeLeft <= 30 ? 'text-red-500' : 'text-slate-400 dark:text-slate-500'}>⏱ {Math.floor(cw.timeLeft / 60)}:{String(cw.timeLeft % 60).padStart(2, '0')}</span>
                         </div>
-                        <div className="overflow-x-auto pb-2 mb-4 flex justify-center">
-                          <div className="inline-block">
-                            {Array.from({ length: cw.rows }).map((_, r) => (
-                              <div key={r} className="flex">
-                                {Array.from({ length: cw.cols }).map((_, c) => {
-                                  const rc = r + ',' + c; const sol = cw.cells[rc];
-                                  if (!sol) return <div key={c} style={{ width: cwCellPx, height: cwCellPx }}></div>;
-                                  const n = cw.numbering[rc];
-                                  const val = cw.inputs[rc] || '';
-                                  const isFocused = cwActive && cwActive.r === r && cwActive.c === c;
-                                  const inWord = cwActiveCells && cwActiveCells[rc];
-                                  let stateCls = 'bg-white dark:bg-slate-800 border-slate-400 dark:border-slate-500 text-slate-900 dark:text-white';
-                                  if (cw.checked && val) stateCls = (val === sol)
-                                    ? 'bg-emerald-100 dark:bg-emerald-900/40 border-emerald-500 text-emerald-700 dark:text-emerald-300'
-                                    : 'bg-red-100 dark:bg-red-900/30 border-red-400 text-red-600 dark:text-red-400';
-                                  else if (isFocused) stateCls = 'bg-amber-300 dark:bg-amber-500/50 border-amber-500 text-slate-900 dark:text-white';
-                                  else if (inWord) stateCls = 'bg-amber-50 dark:bg-amber-500/10 border-slate-400 dark:border-slate-500 text-slate-900 dark:text-white';
-                                  return (
-                                    <div key={c} className="relative" style={{ width: cwCellPx, height: cwCellPx }}>
-                                      {n && <span className="absolute top-0 left-0.5 font-bold text-slate-500 dark:text-slate-400 leading-none z-10 pointer-events-none" style={{ fontSize: Math.max(7, Math.floor(cwCellPx * 0.28)) }}>{n}</span>}
-                                      <input id={'cw-' + r + '-' + c} value={val} maxLength={1} autoComplete="off" autoCapitalize="characters"
-                                        onFocus={() => cwOnFocus(r, c)}
-                                        onKeyDown={e => cwKeyDown(e, r, c)}
-                                        onChange={e => { const v = e.target.value; setCwCell(rc, v); if (v.replace(/[^A-Za-z]/g, '')) cwAdvance(r, c); }}
-                                        style={{ width: cwCellPx, height: cwCellPx, fontSize: Math.max(11, Math.floor(cwCellPx * 0.5)) }}
-                                        className={`text-center font-black uppercase border focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:z-20 relative ${stateCls}`} />
-                                    </div>
-                                  );
-                                })}
+                        <div className="mb-4" style={{ display: 'grid', gridTemplateColumns: 'repeat(' + cw.cols + ', minmax(0, 1fr))', width: '100%', maxWidth: (cw.cols * 46) + 'px', margin: '0 auto' }}>
+                          {Array.from({ length: cw.rows * cw.cols }).map((_, idx) => {
+                            const r = Math.floor(idx / cw.cols), c = idx % cw.cols;
+                            const rc = r + ',' + c; const sol = cw.cells[rc];
+                            if (!sol) return <div key={idx} style={{ aspectRatio: '1' }}></div>;
+                            const n = cw.numbering[rc];
+                            const val = cw.inputs[rc] || '';
+                            const isFocused = cwActive && cwActive.r === r && cwActive.c === c;
+                            const inWord = cwActiveCells && cwActiveCells[rc];
+                            let stateCls = 'bg-white dark:bg-slate-800 border-slate-400 dark:border-slate-500 text-slate-900 dark:text-white';
+                            if (cw.checked && val) stateCls = (val === sol)
+                              ? 'bg-emerald-100 dark:bg-emerald-900/40 border-emerald-500 text-emerald-700 dark:text-emerald-300'
+                              : 'bg-red-100 dark:bg-red-900/30 border-red-400 text-red-600 dark:text-red-400';
+                            else if (isFocused) stateCls = 'bg-amber-300 dark:bg-amber-500/50 border-amber-500 text-slate-900 dark:text-white';
+                            else if (inWord) stateCls = 'bg-amber-50 dark:bg-amber-500/10 border-slate-400 dark:border-slate-500 text-slate-900 dark:text-white';
+                            return (
+                              <div key={idx} className="relative" style={{ aspectRatio: '1' }}>
+                                {n && <span className="absolute top-0 left-0.5 font-black text-slate-500 dark:text-slate-400 leading-none z-10 pointer-events-none" style={{ fontSize: 'clamp(9px, 2.7vw, 13px)' }}>{n}</span>}
+                                <input id={'cw-' + r + '-' + c} value={val} maxLength={1} autoComplete="off" autoCapitalize="characters"
+                                  onFocus={() => cwOnFocus(r, c)}
+                                  onKeyDown={e => cwKeyDown(e, r, c)}
+                                  onChange={e => { const v = e.target.value; setCwCell(rc, v); if (v.replace(/[^A-Za-z]/g, '')) cwAdvance(r, c); }}
+                                  style={{ fontSize: 'clamp(15px, 4.6vw, 22px)' }}
+                                  className={`w-full h-full text-center font-black uppercase border focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:z-20 relative ${stateCls}`} />
                               </div>
-                            ))}
-                          </div>
+                            );
+                          })}
                         </div>
                         <button onClick={checkCrossword} className="w-full mb-6 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 py-3 rounded-2xl font-black text-sm shadow active:scale-95 transition-all">정답 확인 ✓ / ✗</button>
                         <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-left">
