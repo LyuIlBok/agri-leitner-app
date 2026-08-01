@@ -118,6 +118,29 @@
     // Streak is "alive" only if the last study was today or yesterday
     const streakAlive = (g) => g && (g.lastStudyDate === todayStr() || g.lastStudyDate === yesterdayStr());
 
+    // --- English Pronunciation (Web Speech API, built-in & free) ---
+    const speechSupported = typeof window !== 'undefined' && 'speechSynthesis' in window;
+    const pickEnglishVoice = () => {
+      if (!speechSupported) return null;
+      const voices = window.speechSynthesis.getVoices() || [];
+      return voices.find(v => v.lang === 'en-US')
+        || voices.find(v => v.lang && v.lang.startsWith('en-'))
+        || voices.find(v => v.lang && v.lang.startsWith('en'))
+        || null;
+    };
+    const speak = (text, { rate = 0.95 } = {}) => {
+      if (!speechSupported || !text) return;
+      try {
+        window.speechSynthesis.cancel(); // stop any in-flight utterance
+        const u = new SpeechSynthesisUtterance(String(text));
+        u.lang = 'en-US';
+        u.rate = rate;
+        const v = pickEnglishVoice();
+        if (v) u.voice = v;
+        window.speechSynthesis.speak(u);
+      } catch (e) { /* speech not available; fail silently */ }
+    };
+
     // --- Google Pay Constants ---
     const GOOGLE_PAY_BASE_REQUEST = {
       apiVersion: 2,
@@ -211,6 +234,7 @@
       const [isLoaded, setIsLoaded] = useState(false);
       const [isDarkMode, setIsDarkMode] = useState(false);
       const [apiKey, setApiKey] = useState("");
+      const [autoSpeak, setAutoSpeak] = useState(true); // auto-pronounce English term on reveal
       
       // Study Session State
       const [sessionDeck, setSessionDeck] = useState([]);
@@ -268,7 +292,9 @@
       useEffect(() => {
         const storedTheme = localStorage.getItem('agri_pro_theme_v5');
         const storedApi = localStorage.getItem('agri_pro_api_v5');
+        const storedAutoSpeak = localStorage.getItem('agri_pro_autospeak_v1');
         if (storedApi) setApiKey(storedApi);
+        if (storedAutoSpeak !== null) setAutoSpeak(storedAutoSpeak === 'true');
         if (storedTheme === 'dark') {
           setIsDarkMode(true);
           document.documentElement.classList.add('dark');
@@ -296,8 +322,9 @@
         if (isLoaded) {
           localStorage.setItem('agri_pro_theme_v5', isDarkMode ? 'dark' : 'light');
           localStorage.setItem('agri_pro_api_v5', apiKey);
+          localStorage.setItem('agri_pro_autospeak_v1', String(autoSpeak));
         }
-      }, [isDarkMode, apiKey, isLoaded]);
+      }, [isDarkMode, apiKey, autoSpeak, isLoaded]);
 
       // 4b. Gamification: load per-user profile from localStorage (with daily rollovers)
       useEffect(() => {
@@ -464,6 +491,13 @@
 
         return () => clearTimeout(timer);
       }, [activeTab, sessionDeck, isRevealed, timeLeft]);
+
+      // Auto-pronounce the English term when a card is revealed
+      useEffect(() => {
+        if (activeTab === 'study' && isRevealed && autoSpeak && sessionDeck[currentIndex]) {
+          speak(sessionDeck[currentIndex].term);
+        }
+      }, [isRevealed, currentIndex]);
 
       const toggleTheme = () => {
         const nextDark = !isDarkMode;
@@ -1095,7 +1129,26 @@
                         {sessionDeck[currentIndex].morphology.suffix && <span>[{sessionDeck[currentIndex].morphology.suffix}]</span>}
                       </div>
 
-                      <h2 className="text-4xl font-black text-slate-900 dark:text-white mb-10 tracking-tight">{sessionDeck[currentIndex].term}</h2>
+                      <div className="flex items-center justify-center gap-3 mb-10">
+                        <h2 className="text-4xl font-black text-slate-900 dark:text-white tracking-tight">{sessionDeck[currentIndex].term}</h2>
+                        {speechSupported && (
+                          <button
+                            onClick={() => speak(sessionDeck[currentIndex].term)}
+                            title="발음 듣기"
+                            aria-label="발음 듣기"
+                            className="w-10 h-10 shrink-0 flex items-center justify-center rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 active:scale-90 transition-all text-xl"
+                          >
+                            🔊
+                          </button>
+                        )}
+                      </div>
+                      {speechSupported && (
+                        <div className="flex justify-center mb-8 -mt-4">
+                          <button onClick={() => speak(sessionDeck[currentIndex].term, { rate: 0.6 })} className="text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500 hover:text-emerald-500 dark:hover:text-emerald-400 transition-colors flex items-center gap-1">
+                            🐢 천천히 듣기
+                          </button>
+                        </div>
+                      )}
 
                       {!isRevealed ? (
                         <div onClick={() => setIsRevealed(true)} className="w-full py-12 bg-slate-50 dark:bg-slate-800/40 border-2 border-dashed border-slate-200 dark:border-slate-750 rounded-3xl flex flex-col items-center cursor-pointer group hover:bg-slate-100 dark:hover:bg-slate-850 transition-all">
@@ -1317,7 +1370,12 @@
                   <div className="fade-in bg-emerald-50/20 dark:bg-emerald-950/10 border border-emerald-100/40 dark:border-emerald-900/30 p-6 rounded-3xl space-y-4 shadow-sm">
                     <div className="flex justify-between items-start">
                       <div>
-                        <h5 className="text-2xl font-black text-slate-900 dark:text-white">{genResult.term}</h5>
+                        <div className="flex items-center gap-2">
+                          <h5 className="text-2xl font-black text-slate-900 dark:text-white">{genResult.term}</h5>
+                          {speechSupported && (
+                            <button onClick={() => speak(genResult.term)} title="발음 듣기" aria-label="발음 듣기" className="w-7 h-7 shrink-0 flex items-center justify-center rounded-full bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 active:scale-90 transition-all text-sm">🔊</button>
+                          )}
+                        </div>
                         <p className="text-sm font-bold text-emerald-600 dark:text-emerald-400 mt-1">{genResult.meaning}</p>
                       </div>
                       <button 
@@ -1386,6 +1444,9 @@
                           <div>
                             <div className="flex items-center gap-2 mb-1">
                               <span className="font-black text-slate-800 dark:text-white text-lg">{card.term}</span>
+                              {speechSupported && (
+                                <button onClick={() => speak(card.term)} title="발음 듣기" aria-label="발음 듣기" className="w-6 h-6 shrink-0 flex items-center justify-center rounded-full hover:bg-emerald-50 dark:hover:bg-emerald-950/40 active:scale-90 transition-all text-xs">🔊</button>
+                              )}
                               <span className="bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 px-1.5 py-0.5 rounded text-[8px] font-bold text-slate-500 dark:text-slate-400">
                                 {card.is_graduated ? 'Graduated' : `Stage ${card.stage}`}
                               </span>
@@ -1511,6 +1572,27 @@
                           <p className="text-[9px] font-bold mt-1">{opt.label}</p>
                         </button>
                       ))}
+                    </div>
+                  </section>
+                )}
+
+                {/* English Pronunciation Setting */}
+                {speechSupported && (
+                  <section className="bg-slate-50 dark:bg-slate-850 p-6 rounded-3xl border border-slate-100 dark:border-slate-800/60 shadow-sm">
+                    <div className="flex items-center justify-between">
+                      <div className="pr-4">
+                        <h3 className="text-xs font-black text-slate-800 dark:text-slate-200 uppercase tracking-widest">영어 발음 자동 재생</h3>
+                        <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">카드 정답을 확인할 때 영어 단어를 자동으로 소리내 읽어줍니다. (수동 🔊 버튼은 항상 사용 가능)</p>
+                      </div>
+                      <button
+                        onClick={() => setAutoSpeak(v => !v)}
+                        role="switch"
+                        aria-checked={autoSpeak}
+                        title="영어 발음 자동 재생 토글"
+                        className={`relative w-12 h-7 rounded-full transition-colors shrink-0 ${autoSpeak ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-700'}`}
+                      >
+                        <span className={`absolute top-1 left-1 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${autoSpeak ? 'translate-x-5' : ''}`}></span>
+                      </button>
                     </div>
                   </section>
                 )}
