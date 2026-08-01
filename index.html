@@ -329,6 +329,7 @@
       // 배틀 가로세로 (mini crossword, time-attack)
       const [cw, setCw] = useState(null); // null | { status, won, rows, cols, cells, numbering, clues, inputs, timeLeft, earned }
       const cwAwarded = useRef(false);
+      const cwDir = useRef('across'); // current typing direction for auto-advance
 
       // Current card + its effective exercise mode (mixed → per-card _mode)
       const currentCard = sessionDeck[currentIndex] || null;
@@ -920,7 +921,8 @@
         const p = generateCrossword(cards.map(c => ({ term: c.term, meaning: c.meaning })));
         if (!p) return; // not enough suitable words
         cwAwarded.current = false;
-        setCw({ ...p, status: 'active', won: false, inputs: {}, timeLeft: CROSSWORD_TIME, earned: 0 });
+        cwDir.current = 'across';
+        setCw({ ...p, status: 'active', won: false, inputs: {}, timeLeft: CROSSWORD_TIME, earned: 0, checked: false });
       };
       const setCwCell = (rc, val) => {
         const ch = (val || '').toUpperCase().replace(/[^A-Z]/g, '').slice(-1);
@@ -932,8 +934,31 @@
             const earned = 20 + Math.floor(prev.timeLeft / 6); // base + speed bonus
             return { ...prev, inputs, status: 'done', won: true, earned };
           }
-          return { ...prev, inputs };
+          return { ...prev, inputs, checked: false }; // editing clears the last check marks
         });
+      };
+      const checkCrossword = () => setCw(prev => prev && prev.status === 'active' ? { ...prev, checked: true } : prev);
+      // Focus helpers for auto-advance while typing the crossword
+      const cwFocus = (r, c) => { const el = document.getElementById('cw-' + r + '-' + c); if (el) el.focus(); };
+      const cwFillable = (r, c) => cw && cw.cells[r + ',' + c];
+      const cwSetDirForCell = (r, c) => {
+        const hasA = cwFillable(r, c - 1) || cwFillable(r, c + 1);
+        const hasD = cwFillable(r - 1, c) || cwFillable(r + 1, c);
+        if (cwDir.current === 'across' && !hasA && hasD) cwDir.current = 'down';
+        else if (cwDir.current === 'down' && !hasD && hasA) cwDir.current = 'across';
+      };
+      const cwAdvance = (r, c, back = false) => {
+        const step = back ? -1 : 1;
+        const nr = cwDir.current === 'down' ? r + step : r;
+        const nc = cwDir.current === 'across' ? c + step : c;
+        if (cwFillable(nr, nc)) cwFocus(nr, nc);
+      };
+      const cwKeyDown = (e, r, c) => {
+        if (e.key === 'Backspace' && !cw.inputs[r + ',' + c]) { e.preventDefault(); cwAdvance(r, c, true); }
+        else if (e.key === 'ArrowRight') { cwDir.current = 'across'; cwAdvance(r, c); }
+        else if (e.key === 'ArrowLeft') { cwDir.current = 'across'; cwAdvance(r, c, true); }
+        else if (e.key === 'ArrowDown') { cwDir.current = 'down'; cwAdvance(r, c); }
+        else if (e.key === 'ArrowUp') { cwDir.current = 'down'; cwAdvance(r, c, true); }
       };
 
       // Crossword countdown
@@ -1707,19 +1732,27 @@
                           <span className="text-slate-400 dark:text-slate-500">🧩 십자말</span>
                           <span className={cw.timeLeft <= 30 ? 'text-red-500' : 'text-slate-400 dark:text-slate-500'}>⏱ {Math.floor(cw.timeLeft / 60)}:{String(cw.timeLeft % 60).padStart(2, '0')}</span>
                         </div>
-                        <div className="overflow-x-auto pb-2 mb-6">
+                        <div className="overflow-x-auto pb-2 mb-4 flex justify-center">
                           <div className="inline-block">
                             {Array.from({ length: cw.rows }).map((_, r) => (
                               <div key={r} className="flex">
                                 {Array.from({ length: cw.cols }).map((_, c) => {
                                   const rc = r + ',' + c; const sol = cw.cells[rc];
-                                  if (!sol) return <div key={c} className="w-8 h-8"></div>;
+                                  if (!sol) return <div key={c} className="w-9 h-9"></div>;
                                   const n = cw.numbering[rc];
+                                  const val = cw.inputs[rc] || '';
+                                  let stateCls = 'bg-white dark:bg-slate-800 border-slate-400 dark:border-slate-500 text-slate-900 dark:text-white';
+                                  if (cw.checked && val) stateCls = (val === sol)
+                                    ? 'bg-emerald-100 dark:bg-emerald-900/40 border-emerald-500 text-emerald-700 dark:text-emerald-300'
+                                    : 'bg-red-100 dark:bg-red-900/30 border-red-400 text-red-600 dark:text-red-400';
                                   return (
-                                    <div key={c} className="relative w-8 h-8">
-                                      {n && <span className="absolute top-0 left-0.5 text-[7px] font-bold text-slate-400 dark:text-slate-500 leading-none z-10 pointer-events-none">{n}</span>}
-                                      <input value={cw.inputs[rc] || ''} onChange={e => setCwCell(rc, e.target.value)} maxLength={1} autoComplete="off" autoCapitalize="characters"
-                                        className="w-8 h-8 text-center text-sm font-black uppercase border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:bg-emerald-50 dark:focus:bg-emerald-950/40 focus:border-emerald-500" />
+                                    <div key={c} className="relative w-9 h-9">
+                                      {n && <span className="absolute top-0 left-0.5 text-[8px] font-bold text-slate-500 dark:text-slate-400 leading-none z-10 pointer-events-none">{n}</span>}
+                                      <input id={'cw-' + r + '-' + c} value={val} maxLength={1} autoComplete="off" autoCapitalize="characters"
+                                        onFocus={() => cwSetDirForCell(r, c)}
+                                        onKeyDown={e => cwKeyDown(e, r, c)}
+                                        onChange={e => { const v = e.target.value; setCwCell(rc, v); if (v.replace(/[^A-Za-z]/g, '')) cwAdvance(r, c); }}
+                                        className={`w-9 h-9 text-center text-base font-black uppercase border focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:z-20 relative ${stateCls}`} />
                                     </div>
                                   );
                                 })}
@@ -1727,17 +1760,18 @@
                             ))}
                           </div>
                         </div>
-                        <div className="grid grid-cols-2 gap-4 text-left">
+                        <button onClick={checkCrossword} className="w-full mb-6 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 py-3 rounded-2xl font-black text-sm shadow active:scale-95 transition-all">정답 확인 ✓ / ✗</button>
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-left">
                           <div>
-                            <p className="text-[10px] font-black uppercase text-slate-400 dark:text-slate-500 mb-2 tracking-widest">가로</p>
+                            <p className="text-[11px] font-black uppercase text-slate-400 dark:text-slate-500 mb-2 tracking-widest">가로 →</p>
                             {cw.clues.filter(cl => cl.dir === 'across').map(cl => (
-                              <p key={'a' + cl.num} className="text-[11px] text-slate-600 dark:text-slate-300 mb-1.5 leading-snug"><b className="text-slate-800 dark:text-slate-100">{cl.num}.</b> {cl.clue}</p>
+                              <p key={'a' + cl.num} className="text-[13px] text-slate-600 dark:text-slate-300 mb-2 leading-snug"><b className="text-slate-800 dark:text-slate-100">{cl.num}.</b> {cl.clue} <span className="text-slate-400 dark:text-slate-500 whitespace-nowrap">({cl.answer.length}글자·{cl.answer[0]}…)</span></p>
                             ))}
                           </div>
                           <div>
-                            <p className="text-[10px] font-black uppercase text-slate-400 dark:text-slate-500 mb-2 tracking-widest">세로</p>
+                            <p className="text-[11px] font-black uppercase text-slate-400 dark:text-slate-500 mb-2 tracking-widest">세로 ↓</p>
                             {cw.clues.filter(cl => cl.dir === 'down').map(cl => (
-                              <p key={'d' + cl.num} className="text-[11px] text-slate-600 dark:text-slate-300 mb-1.5 leading-snug"><b className="text-slate-800 dark:text-slate-100">{cl.num}.</b> {cl.clue}</p>
+                              <p key={'d' + cl.num} className="text-[13px] text-slate-600 dark:text-slate-300 mb-2 leading-snug"><b className="text-slate-800 dark:text-slate-100">{cl.num}.</b> {cl.clue} <span className="text-slate-400 dark:text-slate-500 whitespace-nowrap">({cl.answer.length}글자·{cl.answer[0]}…)</span></p>
                             ))}
                           </div>
                         </div>
