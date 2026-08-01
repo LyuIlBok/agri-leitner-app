@@ -330,6 +330,7 @@
       const [cw, setCw] = useState(null); // null | { status, won, rows, cols, cells, numbering, clues, inputs, timeLeft, earned }
       const cwAwarded = useRef(false);
       const cwDir = useRef('across'); // current typing direction for auto-advance
+      const [cwActive, setCwActive] = useState(null); // { r, c, dir } focused cell + direction (for highlight)
 
       // Current card + its effective exercise mode (mixed → per-card _mode)
       const currentCard = sessionDeck[currentIndex] || null;
@@ -922,6 +923,7 @@
         if (!p) return; // not enough suitable words
         cwAwarded.current = false;
         cwDir.current = 'across';
+        setCwActive(null);
         setCw({ ...p, status: 'active', won: false, inputs: {}, timeLeft: CROSSWORD_TIME, earned: 0, checked: false });
       };
       const setCwCell = (rc, val) => {
@@ -947,6 +949,7 @@
         if (cwDir.current === 'across' && !hasA && hasD) cwDir.current = 'down';
         else if (cwDir.current === 'down' && !hasD && hasA) cwDir.current = 'across';
       };
+      const cwOnFocus = (r, c) => { cwSetDirForCell(r, c); setCwActive({ r, c, dir: cwDir.current }); };
       const cwAdvance = (r, c, back = false) => {
         const step = back ? -1 : 1;
         const nr = cwDir.current === 'down' ? r + step : r;
@@ -955,10 +958,10 @@
       };
       const cwKeyDown = (e, r, c) => {
         if (e.key === 'Backspace' && !cw.inputs[r + ',' + c]) { e.preventDefault(); cwAdvance(r, c, true); }
-        else if (e.key === 'ArrowRight') { cwDir.current = 'across'; cwAdvance(r, c); }
-        else if (e.key === 'ArrowLeft') { cwDir.current = 'across'; cwAdvance(r, c, true); }
-        else if (e.key === 'ArrowDown') { cwDir.current = 'down'; cwAdvance(r, c); }
-        else if (e.key === 'ArrowUp') { cwDir.current = 'down'; cwAdvance(r, c, true); }
+        else if (e.key === 'ArrowRight') { cwDir.current = 'across'; setCwActive({ r, c, dir: 'across' }); cwAdvance(r, c); }
+        else if (e.key === 'ArrowLeft') { cwDir.current = 'across'; setCwActive({ r, c, dir: 'across' }); cwAdvance(r, c, true); }
+        else if (e.key === 'ArrowDown') { cwDir.current = 'down'; setCwActive({ r, c, dir: 'down' }); cwAdvance(r, c); }
+        else if (e.key === 'ArrowUp') { cwDir.current = 'down'; setCwActive({ r, c, dir: 'down' }); cwAdvance(r, c, true); }
       };
 
       // Crossword countdown
@@ -1373,6 +1376,17 @@
 
       const lvl = gami ? levelInfo(gami.xp) : null;
 
+      // Crossword: cell size that fits the container (no cut-off) + active-word cell set (highlight)
+      const cwCellPx = (cw && cw.cols) ? Math.max(20, Math.min(34, Math.floor(320 / cw.cols))) : 32;
+      const cwActiveCells = (() => {
+        if (!cw || !cwActive) return null;
+        const s = {}; const { r, c, dir } = cwActive;
+        const dr = dir === 'down' ? 1 : 0, dc = dir === 'across' ? 1 : 0;
+        let rr = r, cc = c; while (cw.cells[rr + ',' + cc]) { s[rr + ',' + cc] = 1; rr -= dr; cc -= dc; }
+        rr = r + dr; cc = c + dc; while (cw.cells[rr + ',' + cc]) { s[rr + ',' + cc] = 1; rr += dr; cc += dc; }
+        return s;
+      })();
+
       // --- SaaS Active Authenticated Interface ---
       return (
         <div className="flex flex-col min-h-screen max-w-lg mx-auto bg-white dark:bg-slate-900 shadow-2xl relative border-x border-slate-100 dark:border-slate-800 transition-colors duration-300">
@@ -1738,21 +1752,26 @@
                               <div key={r} className="flex">
                                 {Array.from({ length: cw.cols }).map((_, c) => {
                                   const rc = r + ',' + c; const sol = cw.cells[rc];
-                                  if (!sol) return <div key={c} className="w-9 h-9"></div>;
+                                  if (!sol) return <div key={c} style={{ width: cwCellPx, height: cwCellPx }}></div>;
                                   const n = cw.numbering[rc];
                                   const val = cw.inputs[rc] || '';
+                                  const isFocused = cwActive && cwActive.r === r && cwActive.c === c;
+                                  const inWord = cwActiveCells && cwActiveCells[rc];
                                   let stateCls = 'bg-white dark:bg-slate-800 border-slate-400 dark:border-slate-500 text-slate-900 dark:text-white';
                                   if (cw.checked && val) stateCls = (val === sol)
                                     ? 'bg-emerald-100 dark:bg-emerald-900/40 border-emerald-500 text-emerald-700 dark:text-emerald-300'
                                     : 'bg-red-100 dark:bg-red-900/30 border-red-400 text-red-600 dark:text-red-400';
+                                  else if (isFocused) stateCls = 'bg-amber-300 dark:bg-amber-500/50 border-amber-500 text-slate-900 dark:text-white';
+                                  else if (inWord) stateCls = 'bg-amber-50 dark:bg-amber-500/10 border-slate-400 dark:border-slate-500 text-slate-900 dark:text-white';
                                   return (
-                                    <div key={c} className="relative w-9 h-9">
-                                      {n && <span className="absolute top-0 left-0.5 text-[8px] font-bold text-slate-500 dark:text-slate-400 leading-none z-10 pointer-events-none">{n}</span>}
+                                    <div key={c} className="relative" style={{ width: cwCellPx, height: cwCellPx }}>
+                                      {n && <span className="absolute top-0 left-0.5 font-bold text-slate-500 dark:text-slate-400 leading-none z-10 pointer-events-none" style={{ fontSize: Math.max(7, Math.floor(cwCellPx * 0.28)) }}>{n}</span>}
                                       <input id={'cw-' + r + '-' + c} value={val} maxLength={1} autoComplete="off" autoCapitalize="characters"
-                                        onFocus={() => cwSetDirForCell(r, c)}
+                                        onFocus={() => cwOnFocus(r, c)}
                                         onKeyDown={e => cwKeyDown(e, r, c)}
                                         onChange={e => { const v = e.target.value; setCwCell(rc, v); if (v.replace(/[^A-Za-z]/g, '')) cwAdvance(r, c); }}
-                                        className={`w-9 h-9 text-center text-base font-black uppercase border focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:z-20 relative ${stateCls}`} />
+                                        style={{ width: cwCellPx, height: cwCellPx, fontSize: Math.max(11, Math.floor(cwCellPx * 0.5)) }}
+                                        className={`text-center font-black uppercase border focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:z-20 relative ${stateCls}`} />
                                     </div>
                                   );
                                 })}
