@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AgriLeitner Pro SaaS: Cloud & AI Powered</title>
+  <title>단어밭 · 씨앗팜 — 단어를 심고 씨앗을 수확하세요</title>
   
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -451,7 +451,7 @@
         const paymentDataRequest = Object.assign({}, GOOGLE_PAY_BASE_REQUEST);
         paymentDataRequest.allowedPaymentMethods = [GOOGLE_PAY_CARD_METHOD];
         paymentDataRequest.merchantInfo = {
-          merchantName: 'AgriLeitner Pro'
+          merchantName: '단어밭 · 씨앗팜'
         };
         paymentDataRequest.transactionInfo = {
           countryCode: 'KR',
@@ -1041,11 +1041,11 @@
           <div className="min-h-screen flex items-center justify-center bg-gradient-to-tr from-emerald-950 via-slate-900 to-slate-950 p-6">
             <div className="w-full max-w-md bg-white/10 dark:bg-slate-900/50 backdrop-blur-xl border border-white/10 p-10 rounded-[40px] shadow-2xl space-y-8 animate-[fadeIn_0.3s_ease-out]">
               <div className="text-center">
-                <span className="bg-emerald-500/20 text-emerald-400 text-[10px] font-black px-3 py-1.5 rounded-full border border-emerald-500/10 uppercase tracking-widest">SaaS Cloud</span>
-                <h2 className="text-3xl font-black text-white mt-4 tracking-tight">AgriLeitner Pro</h2>
+                <span className="bg-emerald-500/20 text-emerald-400 text-[10px] font-black px-3 py-1.5 rounded-full border border-emerald-500/10 uppercase tracking-widest">🌱 씨앗팜</span>
+                <h2 className="text-3xl font-black text-white mt-4 tracking-tight">단어밭</h2>
                 <p className="text-xs text-slate-300 mt-2 leading-relaxed">
-                  인지공학 기반 농업 법인용 어휘 학습 SaaS<br/>
-                  지옥의 리셋 라이트너 박스로 단기 암기를 무력화하십시오.
+                  매일 단어를 심고 키워 <span className="text-emerald-400 font-bold">씨앗</span>을 모으세요.<br/>
+                  모은 씨앗은 자연의 결에서 농산물로 수확할 수 있어요.
                 </p>
               </div>
 
@@ -1163,8 +1163,8 @@
           {/* Header */}
           <header className="px-6 py-5 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-white dark:bg-slate-900 sticky top-0 z-10 transition-colors duration-300">
             <h1 className="text-lg font-black text-slate-900 dark:text-slate-100 flex items-center gap-2">
-              <span className="w-8 h-8 bg-emerald-600 dark:bg-emerald-700 rounded-lg flex items-center justify-center text-white text-[10px]">PRO</span>
-              AgriLeitner Platform
+              <span className="w-8 h-8 bg-emerald-600 dark:bg-emerald-700 rounded-lg flex items-center justify-center text-white text-base">🌱</span>
+              단어밭
             </h1>
             <div className="flex items-center gap-2">
               <a 
@@ -1623,7 +1623,7 @@
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                       className="w-full bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800 rounded-2xl py-3 pl-10 pr-10 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 transition-colors" 
-                      placeholder="단어명, 한글 뜻, 또는 비즈니스 예문 검색..."
+                      placeholder="단어명, 한글 뜻, 또는 예문 검색..."
                     />
                     <span className="absolute left-3.5 top-3.5 text-slate-400">🔍</span>
                     {searchQuery && (
@@ -1721,7 +1721,7 @@
                   {profile?.tier !== 'Pro' ? (
                     <div className="space-y-3.5 pt-2">
                       <p className="text-[10px] text-slate-400 dark:text-slate-500 leading-relaxed">
-                        무료 플랜은 월 최대 5회의 AI 단어 자동 생성이 제공됩니다. 학습 효율 극대화 및 고부가가치 농업 생산성을 달성하려면 Pro 요금제로 전환하십시오.
+                        무료 플랜은 월 최대 5회의 AI 단어 자동 생성이 제공됩니다. 더 빠른 단어 확장과 학습 효율을 원하시면 Pro 요금제로 전환하십시오.
                       </p>
                       <button 
                         onClick={() => setIsUpgradeModalOpen(true)}
@@ -1733,7 +1733,7 @@
                   ) : (
                     <div className="space-y-3.5 pt-2">
                       <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold leading-relaxed">
-                        ✓ 귀하의 농업 법인은 무제한 AI 생성이 제공되는 Pro 라이선스를 사용 중입니다.
+                        ✓ 무제한 AI 단어 생성이 제공되는 Pro 라이선스를 사용 중입니다.
                       </p>
                       <button 
                         onClick={downgradeToFreeForTesting}
@@ -1827,7 +1827,7 @@
                 </section>
                 
                 <div className="text-center">
-                  <p className="text-[10px] text-slate-300 dark:text-slate-600 font-bold uppercase tracking-widest">AgriLeitner Pro Cloud v5.0</p>
+                  <p className="text-[10px] text-slate-300 dark:text-slate-600 font-bold uppercase tracking-widest">단어밭 · 씨앗팜 v5.0</p>
                 </div>
               </div>
             )}
@@ -1949,7 +1949,7 @@
                   <span className="bg-emerald-100 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 text-[10px] font-black px-3 py-1.5 rounded-full">PLAN UPGRADE</span>
                   <h4 className="text-2xl font-black text-slate-800 dark:text-slate-100">무료 사용량이 초과되었습니다!</h4>
                   <p className="text-xs text-slate-400 dark:text-slate-500 leading-relaxed">
-                    Free 플랜은 AI 단어 자동 생성이 **월 5회**로 차단됩니다. 아래의 우수 구독 플랜으로 즉시 업그레이드하여 농업 생산성을 강화해 보세요!
+                    Free 플랜은 AI 단어 자동 생성이 **월 5회**로 차단됩니다. 아래의 Pro 플랜으로 업그레이드하여 단어밭을 더 빠르게 키워 보세요!
                   </p>
                 </div>
 
