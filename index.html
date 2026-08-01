@@ -141,13 +141,15 @@
         || voices.find(v => v.lang && v.lang.startsWith('en'))
         || null;
     };
+    let ttsVolume = 1; // 0~1, synced from React state; 0 = muted (skip speaking)
     const speak = (text, { rate = 0.95 } = {}) => {
-      if (!speechSupported || !text) return;
+      if (!speechSupported || !text || ttsVolume <= 0) return;
       try {
         window.speechSynthesis.cancel(); // stop any in-flight utterance
         const u = new SpeechSynthesisUtterance(String(text));
         u.lang = 'en-US';
         u.rate = rate;
+        u.volume = ttsVolume;
         const v = pickEnglishVoice();
         if (v) u.voice = v;
         window.speechSynthesis.speak(u);
@@ -245,6 +247,7 @@
       const [isDarkMode, setIsDarkMode] = useState(false);
       const [apiKey, setApiKey] = useState("");
       const [autoSpeak, setAutoSpeak] = useState(true); // auto-pronounce English term on reveal
+      const [volume, setVolume] = useState(1); // 0~1 pronunciation volume (0 = mute)
       
       // Study Session State
       const [sessionDeck, setSessionDeck] = useState([]);
@@ -330,9 +333,11 @@
         const storedApi = localStorage.getItem('agri_pro_api_v5');
         const storedAutoSpeak = localStorage.getItem('agri_pro_autospeak_v1');
         const storedMode = localStorage.getItem('agri_pro_studymode_v1');
+        const storedVolume = localStorage.getItem('agri_pro_volume_v1');
         if (storedApi) setApiKey(storedApi);
         if (storedAutoSpeak !== null) setAutoSpeak(storedAutoSpeak === 'true');
         if (storedMode && STUDY_MODES.some(m => m.id === storedMode)) setStudyMode(storedMode);
+        if (storedVolume !== null) { const v = parseFloat(storedVolume); if (!isNaN(v)) { setVolume(v); ttsVolume = v; } }
         if (storedTheme === 'dark') {
           setIsDarkMode(true);
           document.documentElement.classList.add('dark');
@@ -362,8 +367,12 @@
           localStorage.setItem('agri_pro_api_v5', apiKey);
           localStorage.setItem('agri_pro_autospeak_v1', String(autoSpeak));
           localStorage.setItem('agri_pro_studymode_v1', studyMode);
+          localStorage.setItem('agri_pro_volume_v1', String(volume));
         }
-      }, [isDarkMode, apiKey, autoSpeak, studyMode, isLoaded]);
+      }, [isDarkMode, apiKey, autoSpeak, studyMode, volume, isLoaded]);
+
+      // Keep the module-level tts volume in sync so speak() (module scope) honors it
+      useEffect(() => { ttsVolume = volume; }, [volume]);
 
       // 4b. Gamification: load per-user from localStorage first (fast, offline-safe)
       const gamiReconciled = useRef(false);
@@ -819,6 +828,13 @@
         const t = setTimeout(() => setTg(prev => ({ ...prev, timeLeft: prev.timeLeft - 1 })), 1000);
         return () => clearTimeout(t);
       }, [activeTab, gameScreen, tg.status, tg.timeLeft]);
+
+      // Pronounce each new word in Typing Rush (honors volume/mute via speak())
+      useEffect(() => {
+        if (activeTab === 'games' && gameScreen === 'typing' && tg.status === 'playing' && tg.deck[tg.idx]) {
+          speak(tg.deck[tg.idx].term);
+        }
+      }, [tg.idx, tg.status]);
 
       // --- AI Word Generator Logic ---
       const generateWord = async (e) => {
@@ -1931,6 +1947,17 @@
                       >
                         <span className={`absolute top-1 left-1 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${autoSpeak ? 'translate-x-5' : ''}`}></span>
                       </button>
+                    </div>
+                    <div className="mt-5 pt-5 border-t border-slate-100 dark:border-slate-800/80">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-[11px] font-black text-slate-700 dark:text-slate-300">발음 음량</span>
+                        <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500">{volume > 0 ? Math.round(volume * 100) + '%' : '음소거'}</span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <button onClick={() => setVolume(volume > 0 ? 0 : 1)} title={volume > 0 ? '음소거' : '음소거 해제'} className="text-xl shrink-0 active:scale-90 transition-transform">{volume > 0 ? '🔊' : '🔇'}</button>
+                        <input type="range" min="0" max="100" value={Math.round(volume * 100)} onChange={e => setVolume(parseInt(e.target.value) / 100)} className="flex-1 accent-emerald-500 cursor-pointer" />
+                      </div>
+                      <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-2">학습·게임의 모든 발음에 적용됩니다.</p>
                     </div>
                   </section>
                 )}
