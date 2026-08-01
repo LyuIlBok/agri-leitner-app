@@ -258,6 +258,10 @@
       const [typeInput, setTypeInput] = useState('');            // typed answer (typing mode)
       const [answerState, setAnswerState] = useState(null);      // null | 'correct' | 'wrong' (auto-graded modes)
 
+      // Mini-game state (Play tab)
+      const [gameScreen, setGameScreen] = useState('hub'); // 'hub' | 'typing'
+      const [tg, setTg] = useState({ status: 'ready', deck: [], idx: 0, input: '', score: 0, correctChars: 0, timeLeft: 60 }); // typing rush
+
       // Current card + its effective exercise mode (mixed → per-card _mode)
       const currentCard = sessionDeck[currentIndex] || null;
       const currentMode = currentCard
@@ -779,6 +783,42 @@
         setAnswerState(correct ? 'correct' : 'wrong');
         if (autoSpeak) speak(currentCard.term);
       };
+
+      // --- Mini-game: Typing Rush ---
+      const startTyping = () => {
+        if (!cards.length) return;
+        setTg({ status: 'playing', deck: [...cards].sort(() => Math.random() - 0.5), idx: 0, input: '', score: 0, correctChars: 0, timeLeft: 60 });
+      };
+      const onTypingInput = (val) => {
+        setTg(prev => {
+          if (prev.status !== 'playing') return prev;
+          const target = prev.deck[prev.idx];
+          if (target && normAnswer(val) === normAnswer(target.term)) {
+            let deck = prev.deck, idx = prev.idx + 1;
+            if (idx >= prev.deck.length) { deck = [...prev.deck].sort(() => Math.random() - 0.5); idx = 0; }
+            return { ...prev, input: '', score: prev.score + 1, correctChars: prev.correctChars + (target.term || '').replace(/\s/g, '').length, deck, idx };
+          }
+          return { ...prev, input: val };
+        });
+      };
+      const skipTyping = () => setTg(prev => {
+        if (prev.status !== 'playing') return prev;
+        let deck = prev.deck, idx = prev.idx + 1;
+        if (idx >= prev.deck.length) { deck = [...prev.deck].sort(() => Math.random() - 0.5); idx = 0; }
+        return { ...prev, input: '', deck, idx };
+      });
+
+      // Typing Rush countdown; awards XP once when time runs out
+      useEffect(() => {
+        if (activeTab !== 'games' || gameScreen !== 'typing' || tg.status !== 'playing') return;
+        if (tg.timeLeft <= 0) {
+          if (tg.score > 0) awardXp(tg.score * 2);
+          setTg(prev => ({ ...prev, status: 'done' }));
+          return;
+        }
+        const t = setTimeout(() => setTg(prev => ({ ...prev, timeLeft: prev.timeLeft - 1 })), 1000);
+        return () => clearTimeout(t);
+      }, [activeTab, gameScreen, tg.status, tg.timeLeft]);
 
       // --- AI Word Generator Logic ---
       const generateWord = async (e) => {
@@ -1400,6 +1440,104 @@
               </div>
             )}
 
+            {/* 1.5 PLAY (MINI-GAMES) TAB */}
+            {activeTab === 'games' && (
+              <div className="fade-in">
+                {gameScreen === 'hub' ? (
+                  <div className="space-y-5">
+                    <div>
+                      <h3 className="text-lg font-black text-slate-800 dark:text-slate-200 mb-1">🎮 미니 게임</h3>
+                      <p className="text-xs text-slate-400 dark:text-slate-500">재미있게 놀면서 단어를 익혀요. 게임으로 얻은 XP도 쌓여요.</p>
+                    </div>
+                    <button
+                      onClick={() => { setGameScreen('typing'); setTg(t => ({ ...t, status: 'ready' })); }}
+                      disabled={!cards.length}
+                      className="w-full text-left p-6 bg-gradient-to-br from-emerald-500 to-emerald-700 rounded-3xl text-white shadow-lg active:scale-95 transition-all disabled:opacity-50"
+                    >
+                      <div className="text-3xl mb-2">⌨️</div>
+                      <h4 className="text-xl font-black">타자 러시</h4>
+                      <p className="text-xs text-emerald-100/90 mt-1">60초 안에 영어 단어를 최대한 빠르고 정확하게 입력!</p>
+                    </button>
+                    <div className="w-full text-left p-6 bg-slate-100 dark:bg-slate-800/50 rounded-3xl text-slate-400 dark:text-slate-500 relative overflow-hidden">
+                      <span className="absolute right-5 top-5 text-[10px] font-black bg-slate-200 dark:bg-slate-700 px-2 py-1 rounded-full">준비중</span>
+                      <div className="text-3xl mb-2">🧩</div>
+                      <h4 className="text-xl font-black">배틀 가로세로</h4>
+                      <p className="text-xs mt-1">뜻을 보고 영어 단어로 십자말풀이 — 곧 공개!</p>
+                    </div>
+                    {!cards.length && <p className="text-[10px] text-slate-400 dark:text-slate-500 text-center pt-2">먼저 단어를 추가하면 게임을 즐길 수 있어요.</p>}
+                  </div>
+                ) : (
+                  <div className="fade-in">
+                    <button onClick={() => { setGameScreen('hub'); setTg(t => ({ ...t, status: 'ready' })); }} className="text-xs font-bold text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 mb-4">← 게임 목록</button>
+
+                    {tg.status === 'ready' && (
+                      <div className="text-center py-16">
+                        <div className="text-6xl mb-4">⌨️</div>
+                        <h3 className="text-2xl font-black text-slate-800 dark:text-slate-100">타자 러시</h3>
+                        <p className="text-sm text-slate-500 dark:text-slate-400 mt-3 mb-10 leading-relaxed">60초 동안 화면에 뜨는 영어 단어를<br/>빠르고 정확하게 입력하세요!<br/><span className="text-[11px] text-slate-400">완료한 단어 1개당 +2 XP</span></p>
+                        <button onClick={startTyping} className="bg-emerald-600 hover:bg-emerald-700 text-white font-black px-12 py-4 rounded-2xl shadow-lg active:scale-95 transition-all">시작하기</button>
+                      </div>
+                    )}
+
+                    {tg.status === 'playing' && tg.deck[tg.idx] && (
+                      <div>
+                        <div className="flex items-center justify-between mb-2 text-sm font-black">
+                          <span className="text-emerald-600 dark:text-emerald-400">⚡ {tg.score}</span>
+                          <span className={tg.timeLeft <= 10 ? 'text-red-500' : 'text-slate-400 dark:text-slate-500'}>⏱ {tg.timeLeft}s</span>
+                        </div>
+                        <div className="w-full h-2 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden mb-10">
+                          <div className={`h-full transition-all duration-1000 ${tg.timeLeft <= 10 ? 'bg-red-500' : 'bg-emerald-500'}`} style={{ width: `${(tg.timeLeft / 60) * 100}%` }}></div>
+                        </div>
+                        <div className="text-center mb-8">
+                          <div className="flex items-center justify-center gap-2 mb-2">
+                            <h2 className="text-4xl font-black text-slate-900 dark:text-white tracking-tight">{tg.deck[tg.idx].term}</h2>
+                            {speechSupported && (
+                              <button onClick={() => speak(tg.deck[tg.idx].term)} title="발음 듣기" className="w-8 h-8 shrink-0 flex items-center justify-center rounded-full bg-emerald-50 dark:bg-emerald-950/40 active:scale-90 transition-all">🔊</button>
+                            )}
+                          </div>
+                          <p className="text-sm font-bold text-emerald-600 dark:text-emerald-400">{tg.deck[tg.idx].meaning}</p>
+                        </div>
+                        <input
+                          autoFocus
+                          value={tg.input}
+                          onChange={e => onTypingInput(e.target.value)}
+                          autoComplete="off" autoCapitalize="none" spellCheck="false"
+                          className="w-full text-center text-2xl font-black bg-slate-50 dark:bg-slate-950 border-2 border-emerald-300 dark:border-emerald-800 rounded-2xl py-5 px-4 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-900 dark:text-white mb-3"
+                          placeholder="여기에 입력"
+                        />
+                        <button onClick={skipTyping} className="w-full text-xs font-bold text-slate-400 dark:text-slate-500 py-2 hover:text-slate-600 dark:hover:text-slate-300">건너뛰기 →</button>
+                      </div>
+                    )}
+
+                    {tg.status === 'done' && (
+                      <div className="text-center py-14">
+                        <div className="text-6xl mb-4">🎉</div>
+                        <h3 className="text-2xl font-black text-slate-800 dark:text-slate-100">타임 오버!</h3>
+                        <div className="grid grid-cols-3 gap-3 my-8">
+                          <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl py-4 border border-slate-100 dark:border-slate-800">
+                            <p className="text-2xl font-black text-emerald-600 dark:text-emerald-400">{tg.score}</p>
+                            <p className="text-[9px] font-bold uppercase text-slate-400 mt-1">단어</p>
+                          </div>
+                          <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl py-4 border border-slate-100 dark:border-slate-800">
+                            <p className="text-2xl font-black text-emerald-600 dark:text-emerald-400">{Math.round(tg.correctChars / 5)}</p>
+                            <p className="text-[9px] font-bold uppercase text-slate-400 mt-1">WPM</p>
+                          </div>
+                          <div className="bg-emerald-50/60 dark:bg-emerald-950/20 rounded-2xl py-4 border border-emerald-100/50 dark:border-emerald-900/30">
+                            <p className="text-2xl font-black text-emerald-600 dark:text-emerald-400">+{tg.score * 2}</p>
+                            <p className="text-[9px] font-bold uppercase text-slate-400 mt-1">XP</p>
+                          </div>
+                        </div>
+                        <div className="flex gap-3">
+                          <button onClick={() => setGameScreen('hub')} className="flex-1 py-4 font-black text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 transition-all">게임 목록</button>
+                          <button onClick={startTyping} className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-4 rounded-2xl font-black shadow-lg active:scale-95 transition-all">다시하기</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* 2. PROGRESS DASHBOARD TAB */}
             {activeTab === 'dashboard' && (
               <div className="fade-in space-y-8">
@@ -1836,6 +1974,7 @@
           {/* Bottom Nav Bar */}
           <nav className="border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-2 flex justify-around items-center sticky bottom-0 z-10 shadow-[0_-10px_20px_rgba(0,0,0,0.02)] transition-colors duration-300">
             <NavItem id="study" icon="⚡" label="Train" />
+            <NavItem id="games" icon="🎮" label="Play" />
             <NavItem id="dashboard" icon="📈" label="Status" />
             <NavItem id="manage" icon="📊" label="Manage" />
             <NavItem id="settings" icon="⚙️" label="Billing" />
